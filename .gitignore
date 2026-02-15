@@ -133,5 +133,7 @@ test.ipynb
 
 # ONNX model weights (download separately)
 demo/onnx_models/*.onnx
+# PyTorch checkpoints (download separately)
+demo/onnx_models/*.pth
 .cache/
 demo/demo_output.mp4

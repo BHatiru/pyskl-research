@@ -1,0 +1,30 @@
+# Full requirements for the mmcv-based demo (demo_realtime.py)
+# This is the heavier stack: PyTorch + mmcv + mmdet + mmpose + pyskl
+#
+# Install order matters! Follow these steps:
+#
+# 1) conda create -n pyskl python=3.8 -y && conda activate pyskl
+#
+# 2) pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 \
+#        --extra-index-url https://download.pytorch.org/whl/cu113
+#    (or use cpu-only: torch==1.11.0+cpu from /whl/cpu)
+#
+# 3) pip install -r demo/requirements_full.txt
+#
+# 4) pip install -e .   (install pyskl itself in editable mode)
+#
+# --- Core framework ---
+mmcv-full==1.5.0
+mmdet==2.23.0
+mmpose==0.24.0
+
+# --- Runtime deps ---
+numpy>=1.19.5,<1.24
+opencv-python>=4.5
+scipy>=1.7
+tqdm
+
+# --- Optional (video decode, plotting) ---
+decord>=0.6.0
+matplotlib
+moviepy
