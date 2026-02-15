@@ -1,0 +1,4 @@
+# Minimal requirements for the ONNX demo (no mmcv/mmpose/mmdet/pyskl needed!)
+numpy>=1.21
+opencv-python>=4.5
+onnxruntime>=1.14.0

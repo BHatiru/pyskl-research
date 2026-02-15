@@ -130,3 +130,8 @@ examples/extract_diving48_skeleton/*pkl
 configs/gen_config.ipynb
 dev.ipynb
 test.ipynb
+
+# ONNX model weights (download separately)
+demo/onnx_models/*.onnx
+.cache/
+demo/demo_output.mp4
