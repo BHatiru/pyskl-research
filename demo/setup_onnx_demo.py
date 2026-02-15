@@ -237,6 +237,7 @@ def setup_full():
     print("\n[pyskl package]")
     try:
         import pyskl
+
         print(f"  ✓ pyskl {pyskl.__version__} is installed")
     except ImportError:
         print("  ✗ pyskl not installed — run: pip install -e .")
@@ -247,13 +248,23 @@ def setup_full():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download models for real-time action recognition demos")
-    parser.add_argument("--full", action="store_true",
-                        help="Also download PyTorch checkpoints for demo_realtime.py")
-    parser.add_argument("--check", action="store_true",
-                        help="Only check which models are present, don't download")
-    parser.add_argument("--full-only", action="store_true",
-                        help="Only download full-pipeline models (skip ONNX)")
+        description="Download models for real-time action recognition demos"
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Also download PyTorch checkpoints for demo_realtime.py",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Only check which models are present, don't download",
+    )
+    parser.add_argument(
+        "--full-only",
+        action="store_true",
+        help="Only download full-pipeline models (skip ONNX)",
+    )
     args = parser.parse_args()
 
     print("=" * 60)

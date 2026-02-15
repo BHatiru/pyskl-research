@@ -135,5 +135,7 @@ test.ipynb
 demo/onnx_models/*.onnx
 # PyTorch checkpoints (download separately)
 demo/onnx_models/*.pth
+# Zip archives from model downloads
+demo/onnx_models/*.zip
 .cache/
 demo/demo_output.mp4
