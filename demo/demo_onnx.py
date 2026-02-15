@@ -77,7 +77,12 @@ def create_session(onnx_path, device="cuda"):
 
     sess = ort.InferenceSession(onnx_path, providers=providers)
     actual = sess.get_providers()
-    print(f"  {Path(onnx_path).name}: providers={actual}")
+    name = Path(onnx_path).name
+    print(f"  {name}: providers={actual}")
+    if device == "cuda" and "CUDAExecutionProvider" not in actual:
+        print(f"  ⚠ WARNING: CUDA requested but NOT available for {name}!")
+        print(f"    Falling back to CPU — this will be SLOW.")
+        print(f"    Install onnxruntime-gpu for CUDA support.")
     return sess
 
 
@@ -290,7 +295,7 @@ class STGCNRecognizer:
         print(f"  {len(self.labels)} action classes loaded.")
 
     def build_input(self, keypoints_buffer, scores_buffer, img_shape=None):
-        """Build STGCN++ input tensor from keypoint buffers.
+        """Build STGCN++ input tensor from keypoint buffers (vectorized).
 
         Args:
             keypoints_buffer: list of (N_persons, 17, 2) arrays  (pixel coords)
@@ -318,26 +323,32 @@ class STGCNRecognizer:
         indices = np.linspace(0, n_frames - 1, T).astype(int)
 
         skeleton = np.zeros((M, T, V, C), dtype=np.float32)
+        half_w = w / 2.0
+        half_h = h / 2.0
+
         for t_out, t_in in enumerate(indices):
-            kpts = keypoints_buffer[t_in]  # (N, 17, 2) pixel coords
-            scores = scores_buffer[t_in]  # (N, 17)
+            kpts = keypoints_buffer[t_in]  # (N, 17, 2)
+            scores = scores_buffer[t_in]   # (N, 17)
             n_persons = min(kpts.shape[0], M)
+            if n_persons == 0:
+                continue
 
-            for p in range(n_persons):
-                # PreNormalize2D: map pixel coords to [-1, 1]
-                x_norm = (kpts[p, :, 0] - w / 2.0) / (w / 2.0)
-                y_norm = (kpts[p, :, 1] - h / 2.0) / (h / 2.0)
-                score = scores[p]
+            # Vectorized over all persons at once
+            kp = kpts[:n_persons]   # (P, 17, 2)
+            sc = scores[:n_persons].copy()  # (P, 17)
 
-                # Zero out low-confidence keypoints
-                low_conf = score < 0.01
-                x_norm[low_conf] = 0.0
-                y_norm[low_conf] = 0.0
-                score[low_conf] = 0.0
+            x_norm = (kp[:, :, 0] - half_w) / half_w  # (P, 17)
+            y_norm = (kp[:, :, 1] - half_h) / half_h  # (P, 17)
 
-                skeleton[p, t_out, :, 0] = x_norm
-                skeleton[p, t_out, :, 1] = y_norm
-                skeleton[p, t_out, :, 2] = score
+            # Zero out low-confidence
+            low = sc < 0.01
+            x_norm[low] = 0.0
+            y_norm[low] = 0.0
+            sc[low] = 0.0
+
+            skeleton[:n_persons, t_out, :, 0] = x_norm
+            skeleton[:n_persons, t_out, :, 1] = y_norm
+            skeleton[:n_persons, t_out, :, 2] = sc
 
         return skeleton[None]  # (1, M, T, V, C)
 
@@ -561,9 +572,11 @@ def run_stream(args):
     det_every = args.det_every
 
     cached_bboxes = []
+    recog_every = args.recog_every
 
     print(f"\nWindow: {window} frames | Clip len: {args.clip_len}")
-    print(f"Det every: {det_every} frames | Det score: {args.det_score_thr}")
+    print(f"Det every: {det_every} frames | Recog every: {recog_every} frames")
+    print(f"Det score: {args.det_score_thr}")
     print("Press Q to quit.\n")
 
     # Warmup
@@ -589,7 +602,7 @@ def run_stream(args):
         if proc_w != src_w or proc_h != src_h:
             proc_frame = cv2.resize(frame, (proc_w, proc_h))
         else:
-            proc_frame = frame.copy()
+            proc_frame = frame
 
         timings = {}
 
@@ -615,9 +628,11 @@ def run_stream(args):
         kpts_buffer.append(keypoints)
         scores_buffer.append(scores)
 
-        # --- Action recognition ---
+        # --- Action recognition (skip frames for speed) ---
         t0 = time.perf_counter()
-        if len(kpts_buffer) >= args.min_frames:
+        if len(kpts_buffer) >= args.min_frames and (
+            frame_count % recog_every == 0 or recog_every == 1
+        ):
             results = recognizer(
                 list(kpts_buffer), list(scores_buffer), img_shape=(proc_h, proc_w)
             )
@@ -783,6 +798,12 @@ def parse_args():
         type=int,
         default=1,
         help="Run detection every N frames (1=every frame)",
+    )
+    p.add_argument(
+        "--recog-every",
+        type=int,
+        default=1,
+        help="Run STGCN++ recognition every N frames (1=every frame, try 4-8 on slow machines)",
     )
 
     # Resolution
