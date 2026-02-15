@@ -19,11 +19,12 @@ Usage:
     python demo/demo_onnx.py --device cuda
     python demo/demo_onnx.py --device cpu --short-side 320
 
-    # Clip mode — press 'r' to record, then auto-infer:
-    python demo/demo_onnx.py --mode clip --record-seconds 3.0
+    # Record the annotated output to a video file:
+    python demo/demo_onnx.py --device cuda --output demo_recording.mp4
+    python demo/demo_onnx.py --clip input.mp4 --output output.mp4
 
-    # Process a video file:
-    python demo/demo_onnx.py --clip path/to/video.mp4
+    # Clip mode — press 'r' to record, then auto-infer:
+    python demo/demo_onnx.py --mode clip --record-seconds 3.0 --output clips.mp4
 
     # Benchmark individual stages:
     python demo/demo_onnx.py --benchmark
@@ -567,6 +568,20 @@ def run_stream(args):
         proc_w, proc_h = src_w, src_h
     print(f"Processing at: {proc_w}×{proc_h}")
 
+    # Video writer for recording
+    video_writer = None
+    if args.output:
+        out_fps = (
+            args.output_fps if args.output_fps > 0 else (src_fps if args.clip else 25)
+        )
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(args.output, fourcc, out_fps, (proc_w, proc_h))
+        if video_writer.isOpened():
+            print(f"Recording to: {args.output} ({proc_w}×{proc_h} @ {out_fps:.0f}fps)")
+        else:
+            print(f"WARNING: Could not open video writer for {args.output}")
+            video_writer = None
+
     # Buffers
     window = args.window_frames
     kpts_buffer = deque(maxlen=window)
@@ -591,7 +606,9 @@ def run_stream(args):
     print(f"Det every: {det_every} frames | Recog every: {recog_every} frames")
     print(f"Det score: {args.det_score_thr}")
     print("Press Q to quit.")
-    print(f"\n{'Frame':>6} {'Det':>8} {'Pose':>8} {'Recog':>8} {'Total':>8} {'FPS':>7}  {'Action'}")
+    print(
+        f"\n{'Frame':>6} {'Det':>8} {'Pose':>8} {'Recog':>8} {'Total':>8} {'FPS':>7}  {'Action'}"
+    )
     print("-" * 72)
 
     # Warmup
@@ -688,21 +705,30 @@ def run_stream(args):
 
         draw_hud(vis_frame, results, current_fps, timings, frame_count)
 
+        # Write to output video
+        if video_writer is not None:
+            video_writer.write(vis_frame)
+
         cv2.imshow("ONNX Action Recognition", vis_frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q") or key == 27:
             break
 
     cap.release()
+    if video_writer is not None:
+        video_writer.release()
+        print(f"  Recording saved to: {args.output}")
     cv2.destroyAllWindows()
 
     # --- Final summary ---
     print("\n" + "=" * 72)
     print(f"  Processed {frame_count} frames | Avg FPS: {current_fps:.1f}")
-    print(f"  Avg timings:  det={avg_timings['det']:.1f}ms  "
-          f"pose={avg_timings['pose']:.1f}ms  "
-          f"recog={avg_timings['recog']:.1f}ms  "
-          f"total={avg_timings['total']:.1f}ms")
+    print(
+        f"  Avg timings:  det={avg_timings['det']:.1f}ms  "
+        f"pose={avg_timings['pose']:.1f}ms  "
+        f"recog={avg_timings['recog']:.1f}ms  "
+        f"total={avg_timings['total']:.1f}ms"
+    )
     print("=" * 72)
 
 
@@ -764,9 +790,24 @@ def run_clip(args):
         detector(dummy_img)
         pose_estimator(dummy_img, [[0, 0, proc_w, proc_h]])
 
+    # Video writer for recording (saves annotated playback clips)
+    video_writer = None
+    if args.output:
+        out_fps = args.output_fps if args.output_fps > 0 else 25
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(args.output, fourcc, out_fps, (proc_w, proc_h))
+        if video_writer.isOpened():
+            print(
+                f"Recording playbacks to: {args.output} ({proc_w}×{proc_h} @ {out_fps:.0f}fps)"
+            )
+        else:
+            print(f"WARNING: Could not open video writer for {args.output}")
+            video_writer = None
+
     WINDOW_NAME = "ONNX Clip Mode  [r=record, Q/ESC=quit]"
     recording = False
     clip_frames = []
+    clip_count = 0
     last_label = 'Press "r" to record'
     last_top5 = []
 
@@ -787,7 +828,11 @@ def run_clip(args):
             cv2.putText(
                 frame,
                 f"REC {len(clip_frames)}/{frames_to_record}",
-                (50, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
+                (50, 38),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
             )
 
             if len(clip_frames) >= frames_to_record:
@@ -844,8 +889,12 @@ def run_clip(args):
                 # Print detailed timing to terminal
                 print(f"\n  {'Stage':<20} {'Total (ms)':<14} {'Per-frame (ms)':<14}")
                 print(f"  {'-'*48}")
-                print(f"  {'Detection':<20} {t_det_total*1000:<14.1f} {t_det_total*1000/n:<14.1f}")
-                print(f"  {'Pose estimation':<20} {t_pose_total*1000:<14.1f} {t_pose_total*1000/n:<14.1f}")
+                print(
+                    f"  {'Detection':<20} {t_det_total*1000:<14.1f} {t_det_total*1000/n:<14.1f}"
+                )
+                print(
+                    f"  {'Pose estimation':<20} {t_pose_total*1000:<14.1f} {t_pose_total*1000/n:<14.1f}"
+                )
                 print(f"  {'Recognition':<20} {t_recog:<14.1f} {'—':<14}")
                 print(f"  {'-'*48}")
                 print(f"  {'TOTAL':<20} {t_total:<14.1f} {t_total/n:<14.1f}")
@@ -853,22 +902,41 @@ def run_clip(args):
                 for i, (idx, lbl, prob) in enumerate(results[:5]):
                     print(f"    {i+1}. {lbl:<30} {prob:.1%}")
 
-                # Show skeleton playback
+                # Show skeleton playback (and optionally record)
+                clip_count += 1
                 print(f"\n  Playing back {n} annotated frames...")
                 for vf in vis_frames:
                     # Overlay result on playback
                     overlay = vf.copy()
                     cv2.rectangle(overlay, (0, 0), (proc_w, 80), (0, 0, 0), -1)
                     cv2.addWeighted(overlay, 0.6, vf, 0.4, 0, vf)
-                    cv2.putText(vf, last_label, (10, 35),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    cv2.putText(
+                        vf,
+                        last_label,
+                        (10, 35),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (0, 255, 255),
+                        2,
+                    )
                     for j, (_, lbl, prob) in enumerate(last_top5):
-                        cv2.putText(vf, f"{lbl[:25]} {prob:.1%}", (10, 60 + j * 20),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                        cv2.putText(
+                            vf,
+                            f"{lbl[:25]} {prob:.1%}",
+                            (10, 60 + j * 20),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4,
+                            (200, 200, 200),
+                            1,
+                        )
+                    if video_writer is not None:
+                        video_writer.write(vf)
                     cv2.imshow(WINDOW_NAME, vf)
                     if cv2.waitKey(50) & 0xFF in (27, ord("q")):
                         break
 
+                if video_writer is not None:
+                    print(f"  Clip {clip_count} written to {args.output}")
                 clip_frames = []
                 print(f'\n  Ready — press "r" to record again.\n')
         else:
@@ -876,8 +944,15 @@ def run_clip(args):
             overlay = frame.copy()
             cv2.rectangle(overlay, (0, 0), (proc_w, 40), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
-            cv2.putText(frame, last_label, (10, 28),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(
+                frame,
+                last_label,
+                (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2,
+            )
 
         cv2.imshow(WINDOW_NAME, frame)
         key = cv2.waitKey(1) & 0xFF
@@ -889,6 +964,9 @@ def run_clip(args):
             print("  Recording...")
 
     cap.release()
+    if video_writer is not None:
+        video_writer.release()
+        print(f"  All clips saved to: {args.output}")
     cv2.destroyAllWindows()
     print("\nClip mode ended.")
 
@@ -975,8 +1053,8 @@ def parse_args():
         "--mode",
         choices=["stream", "clip"],
         default="stream",
-        help='stream = continuous live recognition; '
-             'clip = press "r" to record then infer',
+        help="stream = continuous live recognition; "
+        'clip = press "r" to record then infer',
     )
     p.add_argument(
         "--clip", type=str, default=None, help="Path to video file (default: webcam)"
@@ -1053,6 +1131,20 @@ def parse_args():
         type=int,
         default=0,
         help="Resize short side to this (0=no resize)",
+    )
+
+    # Recording
+    p.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Save annotated output to video file (e.g. demo_recording.mp4)",
+    )
+    p.add_argument(
+        "--output-fps",
+        type=float,
+        default=0,
+        help="FPS for output video (0=match source or 25 for webcam)",
     )
 
     # Benchmark
