@@ -15,9 +15,18 @@ Models (all in demo/onnx_models/):
     stgcnpp_ntu120_xsub_hrnet_j.onnx –  5 MB, (N,2,100,17,3)
 
 Usage:
+    # Stream mode (default) — continuous webcam with live action label:
     python demo/demo_onnx.py --device cuda
-    python demo/demo_onnx.py --device cpu --camera 0 --window-frames 30
+    python demo/demo_onnx.py --device cpu --short-side 320
+
+    # Clip mode — press 'r' to record, then auto-infer:
+    python demo/demo_onnx.py --mode clip --record-seconds 3.0
+
+    # Process a video file:
     python demo/demo_onnx.py --clip path/to/video.mp4
+
+    # Benchmark individual stages:
+    python demo/demo_onnx.py --benchmark
 
 Author: Research demo for advisor meeting
 """
@@ -328,13 +337,13 @@ class STGCNRecognizer:
 
         for t_out, t_in in enumerate(indices):
             kpts = keypoints_buffer[t_in]  # (N, 17, 2)
-            scores = scores_buffer[t_in]   # (N, 17)
+            scores = scores_buffer[t_in]  # (N, 17)
             n_persons = min(kpts.shape[0], M)
             if n_persons == 0:
                 continue
 
             # Vectorized over all persons at once
-            kp = kpts[:n_persons]   # (P, 17, 2)
+            kp = kpts[:n_persons]  # (P, 17, 2)
             sc = scores[:n_persons].copy()  # (P, 17)
 
             x_norm = (kp[:, :, 0] - half_w) / half_w  # (P, 17)
@@ -574,10 +583,16 @@ def run_stream(args):
     cached_bboxes = []
     recog_every = args.recog_every
 
+    # Rolling averages for terminal output
+    avg_timings = {"det": 0, "pose": 0, "recog": 0, "total": 0}
+    PRINT_EVERY = 30  # print stats every N frames
+
     print(f"\nWindow: {window} frames | Clip len: {args.clip_len}")
     print(f"Det every: {det_every} frames | Recog every: {recog_every} frames")
     print(f"Det score: {args.det_score_thr}")
-    print("Press Q to quit.\n")
+    print("Press Q to quit.")
+    print(f"\n{'Frame':>6} {'Det':>8} {'Pose':>8} {'Recog':>8} {'Total':>8} {'FPS':>7}  {'Action'}")
+    print("-" * 72)
 
     # Warmup
     print("Warming up GPU...")
@@ -643,6 +658,24 @@ def run_stream(args):
         fps_window.append(1000.0 / max(t_total, 1e-6))
         current_fps = sum(fps_window) / len(fps_window)
 
+        # --- Terminal timing output ---
+        alpha = 0.1  # exponential moving average
+        for k in avg_timings:
+            if k in timings:
+                avg_timings[k] = avg_timings[k] * (1 - alpha) + timings[k] * alpha
+
+        if frame_count % PRINT_EVERY == 0 or frame_count == 1:
+            action_str = results[0][1] if results else "—"
+            print(
+                f"{frame_count:>6} "
+                f"{avg_timings['det']:>7.1f}ms "
+                f"{avg_timings['pose']:>7.1f}ms "
+                f"{avg_timings['recog']:>7.1f}ms "
+                f"{avg_timings['total']:>7.1f}ms "
+                f"{current_fps:>6.1f}  "
+                f"{action_str}"
+            )
+
         # --- Visualization ---
         vis_frame = proc_frame.copy()
         if len(keypoints) > 0:
@@ -662,7 +695,202 @@ def run_stream(args):
 
     cap.release()
     cv2.destroyAllWindows()
-    print(f"\nProcessed {frame_count} frames. Avg FPS: {current_fps:.1f}")
+
+    # --- Final summary ---
+    print("\n" + "=" * 72)
+    print(f"  Processed {frame_count} frames | Avg FPS: {current_fps:.1f}")
+    print(f"  Avg timings:  det={avg_timings['det']:.1f}ms  "
+          f"pose={avg_timings['pose']:.1f}ms  "
+          f"recog={avg_timings['recog']:.1f}ms  "
+          f"total={avg_timings['total']:.1f}ms")
+    print("=" * 72)
+
+
+# ---------------------------------------------------------------------------
+#  Clip mode — record then infer
+# ---------------------------------------------------------------------------
+
+
+def run_clip(args):
+    """Clip mode: press 'r' to record a short clip, then run full pipeline."""
+    print("\n=== ONNX Clip Mode — Record then Recognize ===")
+    print(f"Device: {args.device}")
+
+    # Load models
+    model_dir = Path(args.model_dir)
+    det_path = str(model_dir / args.det_model)
+    pose_path = str(model_dir / args.pose_model)
+    recog_path = str(model_dir / args.recog_model)
+    recog_device = args.recog_device or args.device
+
+    print("\nLoading models...")
+    detector = YOLOXDetector(det_path, device=args.device, score_thr=args.det_score_thr)
+    pose_estimator = RTMPoseEstimator(pose_path, device=args.device)
+    recognizer = STGCNRecognizer(
+        recog_path,
+        args.label_map,
+        device=recog_device,
+        clip_len=args.clip_len,
+        num_person=args.num_person,
+    )
+
+    # Open camera
+    source = args.clip if args.clip else args.camera
+    cap = cv2.VideoCapture(source)
+    if not cap.isOpened():
+        print(f"ERROR: Cannot open video source: {source}")
+        return
+
+    src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or 30
+
+    # Processing resolution
+    if args.short_side > 0:
+        scale_r = args.short_side / min(src_h, src_w)
+        proc_w, proc_h = int(src_w * scale_r), int(src_h * scale_r)
+    else:
+        proc_w, proc_h = src_w, src_h
+
+    frames_to_record = int(args.record_seconds * src_fps)
+    print(f"\nSource: {source} ({src_w}×{src_h} @ {src_fps:.0f}fps)")
+    print(f"Processing at: {proc_w}×{proc_h}")
+    print(f'Press "r" to record {args.record_seconds}s ({frames_to_record} frames)')
+    print("Press ESC/Q to quit.\n")
+
+    # Warmup
+    dummy_img = np.random.randint(0, 255, (proc_h, proc_w, 3), dtype=np.uint8)
+    for _ in range(3):
+        detector(dummy_img)
+        pose_estimator(dummy_img, [[0, 0, proc_w, proc_h]])
+
+    WINDOW_NAME = "ONNX Clip Mode  [r=record, Q/ESC=quit]"
+    recording = False
+    clip_frames = []
+    last_label = 'Press "r" to record'
+    last_top5 = []
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Resize
+        if proc_w != src_w or proc_h != src_h:
+            frame = cv2.resize(frame, (proc_w, proc_h))
+
+        if recording:
+            clip_frames.append(frame.copy())
+
+            # Recording indicator
+            cv2.circle(frame, (30, 30), 12, (0, 0, 255), -1)
+            cv2.putText(
+                frame,
+                f"REC {len(clip_frames)}/{frames_to_record}",
+                (50, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
+            )
+
+            if len(clip_frames) >= frames_to_record:
+                recording = False
+                print(f"\n  Recorded {len(clip_frames)} frames — running inference...")
+
+                # --- Full pipeline on the recorded clip ---
+                t_start = time.perf_counter()
+
+                kpts_buffer = []
+                scores_buffer = []
+                vis_frames = []
+
+                t_det_total = 0
+                t_pose_total = 0
+
+                for i, cf in enumerate(clip_frames):
+                    t0 = time.perf_counter()
+                    bboxes = detector(cf)
+                    t_det_total += time.perf_counter() - t0
+
+                    t0 = time.perf_counter()
+                    if len(bboxes) > 0:
+                        kpts, scores = pose_estimator(cf, bboxes)
+                    else:
+                        kpts = np.zeros((0, 17, 2))
+                        scores = np.zeros((0, 17))
+                    t_pose_total += time.perf_counter() - t0
+
+                    kpts_buffer.append(kpts)
+                    scores_buffer.append(scores)
+
+                    # Annotated frame for playback
+                    vf = cf.copy()
+                    if len(kpts) > 0:
+                        draw_skeleton(vf, kpts, scores, kpt_thr=0.3)
+                    for bb in bboxes:
+                        x1, y1, x2, y2 = [int(v) for v in bb]
+                        cv2.rectangle(vf, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                    vis_frames.append(vf)
+
+                # Recognition
+                t0 = time.perf_counter()
+                results = recognizer(
+                    kpts_buffer, scores_buffer, img_shape=(proc_h, proc_w)
+                )
+                t_recog = (time.perf_counter() - t0) * 1000
+                t_total = (time.perf_counter() - t_start) * 1000
+
+                n = len(clip_frames)
+                last_label = f"{results[0][1]} ({results[0][2]:.1%})"
+                last_top5 = results[:5]
+
+                # Print detailed timing to terminal
+                print(f"\n  {'Stage':<20} {'Total (ms)':<14} {'Per-frame (ms)':<14}")
+                print(f"  {'-'*48}")
+                print(f"  {'Detection':<20} {t_det_total*1000:<14.1f} {t_det_total*1000/n:<14.1f}")
+                print(f"  {'Pose estimation':<20} {t_pose_total*1000:<14.1f} {t_pose_total*1000/n:<14.1f}")
+                print(f"  {'Recognition':<20} {t_recog:<14.1f} {'—':<14}")
+                print(f"  {'-'*48}")
+                print(f"  {'TOTAL':<20} {t_total:<14.1f} {t_total/n:<14.1f}")
+                print(f"\n  → {results[0][1]} ({results[0][2]:.1%})")
+                for i, (idx, lbl, prob) in enumerate(results[:5]):
+                    print(f"    {i+1}. {lbl:<30} {prob:.1%}")
+
+                # Show skeleton playback
+                print(f"\n  Playing back {n} annotated frames...")
+                for vf in vis_frames:
+                    # Overlay result on playback
+                    overlay = vf.copy()
+                    cv2.rectangle(overlay, (0, 0), (proc_w, 80), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.6, vf, 0.4, 0, vf)
+                    cv2.putText(vf, last_label, (10, 35),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    for j, (_, lbl, prob) in enumerate(last_top5):
+                        cv2.putText(vf, f"{lbl[:25]} {prob:.1%}", (10, 60 + j * 20),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+                    cv2.imshow(WINDOW_NAME, vf)
+                    if cv2.waitKey(50) & 0xFF in (27, ord("q")):
+                        break
+
+                clip_frames = []
+                print(f'\n  Ready — press "r" to record again.\n')
+        else:
+            # Idle — show live preview with last result
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (proc_w, 40), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+            cv2.putText(frame, last_label, (10, 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        cv2.imshow(WINDOW_NAME, frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (27, ord("q")):
+            break
+        elif key == ord("r") and not recording:
+            recording = True
+            clip_frames = []
+            print("  Recording...")
+
+    cap.release()
+    cv2.destroyAllWindows()
+    print("\nClip mode ended.")
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +972,13 @@ def parse_args():
 
     # Modes
     p.add_argument(
+        "--mode",
+        choices=["stream", "clip"],
+        default="stream",
+        help='stream = continuous live recognition; '
+             'clip = press "r" to record then infer',
+    )
+    p.add_argument(
         "--clip", type=str, default=None, help="Path to video file (default: webcam)"
     )
     p.add_argument("--camera", type=int, default=0, help="Webcam index")
@@ -751,6 +986,12 @@ def parse_args():
         "--benchmark",
         action="store_true",
         help="Run benchmark mode instead of live demo",
+    )
+    p.add_argument(
+        "--record-seconds",
+        type=float,
+        default=3.0,
+        help="Seconds to record in clip mode (default: 3.0)",
     )
 
     # Device
@@ -825,5 +1066,7 @@ if __name__ == "__main__":
 
     if args.benchmark:
         run_benchmark(args)
+    elif args.mode == "clip":
+        run_clip(args)
     else:
         run_stream(args)
