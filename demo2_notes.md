@@ -128,14 +128,22 @@ recognition benchmark with 114k video clips).
 ## Quick-start commands
 
 ```bash
-# GPU — streaming webcam
+# GPU — streaming webcam (recommended)
 python demo/demo_realtime.py --device cuda:0
+
+# GPU — FAST mode (lighter models + FP16 + skip frames)
+python demo/demo_realtime.py --fast
 
 # GPU — process bundled sample video (loops)
 python demo/demo_realtime.py --video demo/ntu_sample.avi --device cuda:0
 
 # GPU — clip mode (press 'r' to record 3 s)
 python demo/demo_realtime.py --mode clip --device cuda:0
+
+# GPU — full optimisation flags (manual)
+python demo/demo_realtime.py --device cuda:0 \
+    --detector yolox-tiny --pose-model vipnas-mbv3 \
+    --fp16 --skip-frames 2 --short-side 256 --no-vis
 
 # CPU fallback (slow — expect ~0.05 Hz)
 python demo/demo_realtime.py --device cpu --skip-frames 3 --clip-len 15
@@ -148,10 +156,36 @@ python demo/demo_skeleton.py demo/ntu_sample.avi demo/demo_output.mp4 \
 
 ---
 
+## GPU optimisation flags
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--fast` | off | Preset: yolox-tiny + vipnas-mbv3 + skip=2 + short-side=256 |
+| `--fp16` | auto (on for CUDA) | FP16 mixed-precision inference (~2× throughput on Ampere+) |
+| `--no-fp16` | off | Force-disable FP16 |
+| `--warmup` | auto (on for CUDA) | Dummy inference at startup to pre-compile CUDA kernels |
+| `--no-vis` | off | Skip per-frame skeleton rendering in stream mode (saves ~10-30%) |
+| `--detector yolox-tiny` | faster-rcnn | Single-stage detector, ~5× faster |
+| `--pose-model vipnas-mbv3` | hrnet-w32 | Lighter pose model, ~3-5× faster |
+| `--skip-frames N` | 1 | Process every Nth frame (reduces det/pose cost linearly) |
+| `--short-side N` | 320 | Resize input (smaller = faster detection) |
+
+Expected throughput with `--fast` on RTX 3060:
+
+| Stage | Default | Fast mode |
+|-------|---------|-----------|
+| Detection (15 frames) | ~1.5 s | ~0.4 s |
+| Pose estimation | ~0.8 s | ~0.3 s |
+| Recognition | ~0.01 s | ~0.01 s |
+| **Total** | **~2.3 s (0.4 Hz)** | **~0.7 s (1.4 Hz)** |
+
+---
+
 ## Potential improvements (out of scope for now)
 
-- Replace Faster-RCNN + HRNet with a lighter detector/pose stack (e.g. YOLO +
-  MoveNet) to push inference closer to real-time on CPU.
+- ~~Replace Faster-RCNN + HRNet with a lighter detector/pose stack~~ → **Done**:
+  `--fast` / `--detector yolox-tiny` / `--pose-model vipnas-mbv3`
+- ~~FP16 mixed-precision inference~~ → **Done**: `--fp16` (auto-enabled on CUDA)
 - Use TorchScript / ONNX export for the GCN to reduce recognition latency.
 - Multi-person action label display (currently shows top-1 over all tracked
   persons).

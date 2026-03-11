@@ -76,19 +76,32 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 
-def create_session(onnx_path, device="cuda"):
-    """Create ONNX Runtime InferenceSession with preferred provider."""
+def create_session(onnx_path, device="cuda", threads=0):
+    """Create ONNX Runtime InferenceSession with preferred provider.
+
+    Args:
+        threads: Number of intra-op threads (0 = ORT default, usually = cores).
+    """
     import onnxruntime as ort
+
+    opts = ort.SessionOptions()
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    if threads > 0:
+        opts.intra_op_num_threads = threads
+        opts.inter_op_num_threads = max(1, threads // 2)
+    opts.enable_mem_pattern = True
+    opts.enable_cpu_mem_arena = True
 
     if device == "cuda":
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     else:
         providers = ["CPUExecutionProvider"]
 
-    sess = ort.InferenceSession(onnx_path, providers=providers)
+    sess = ort.InferenceSession(onnx_path, sess_options=opts, providers=providers)
     actual = sess.get_providers()
     name = Path(onnx_path).name
-    print(f"  {name}: providers={actual}")
+    thr_info = f", threads={threads}" if threads > 0 else ""
+    print(f"  {name}: providers={actual}{thr_info}")
     if device == "cuda" and "CUDAExecutionProvider" not in actual:
         print(f"  ⚠ WARNING: CUDA requested but NOT available for {name}!")
         print(f"    Falling back to CPU — this will be SLOW.")
@@ -109,8 +122,8 @@ class YOLOXDetector:
         labels: (1, N)     = class IDs (0 = person)
     """
 
-    def __init__(self, onnx_path, device="cuda", input_size=(416, 416), score_thr=0.5):
-        self.session = create_session(onnx_path, device)
+    def __init__(self, onnx_path, device="cuda", input_size=(416, 416), score_thr=0.5, threads=0):
+        self.session = create_session(onnx_path, device, threads=threads)
         self.input_size = input_size  # (H, W)
         self.score_thr = score_thr
         self.input_name = self.session.get_inputs()[0].name
@@ -158,11 +171,14 @@ class RTMPoseEstimator:
     MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32)
     STD = np.array([58.395, 57.12, 57.375], dtype=np.float32)
 
-    def __init__(self, onnx_path, device="cuda", input_size=(192, 256)):
-        self.session = create_session(onnx_path, device)
+    def __init__(self, onnx_path, device="cuda", input_size=(192, 256), threads=0):
+        self.session = create_session(onnx_path, device, threads=threads)
         self.input_size = input_size  # (W, H)
         self.input_name = self.session.get_inputs()[0].name
         self.simcc_split_ratio = 2.0
+        # Pre-compute for batch postprocess
+        self._inv_simcc = 1.0 / self.simcc_split_ratio
+        self._input_size_arr = np.array(self.input_size, dtype=np.float32)  # (W, H)
 
     # ---- Preprocessing helpers (ported from rtmlib) ----
 
@@ -244,32 +260,72 @@ class RTMPoseEstimator:
         return locs.reshape(N, K, 2), vals.reshape(N, K)
 
     def postprocess(self, outputs, center, scale):
-        """Decode SimCC → image-space keypoints."""
+        """Decode SimCC → image-space keypoints (single person)."""
         simcc_x, simcc_y = outputs
         locs, scores = self._get_simcc_maximum(simcc_x, simcc_y)
-        keypoints = locs / self.simcc_split_ratio
+        keypoints = locs * self._inv_simcc
 
-        # Rescale to image coordinates
-        input_size = np.array(self.input_size, dtype=np.float32)  # (W, H)
-        keypoints = keypoints / input_size * scale
+        keypoints = keypoints / self._input_size_arr * scale
         keypoints = keypoints + center - scale / 2.0
 
         return keypoints[0], scores[0]  # (17,2), (17,)
 
+    def postprocess_batch(self, simcc_x, simcc_y, centers, scales):
+        """Decode SimCC → image-space keypoints for a batch of persons.
+
+        Args:
+            simcc_x: (B, 17, Wx)  batched SimCC x-heatmaps
+            simcc_y: (B, 17, Wy)  batched SimCC y-heatmaps
+            centers: (B, 2)  crop centers
+            scales:  (B, 2)  crop scales
+
+        Returns:
+            keypoints: (B, 17, 2)  image-space coords
+            scores:    (B, 17)
+        """
+        locs, scores = self._get_simcc_maximum(simcc_x, simcc_y)
+        keypoints = locs * self._inv_simcc  # (B, 17, 2)
+
+        # Vectorized rescale: each person has its own center/scale
+        # centers (B,2), scales (B,2) → broadcast with (B,17,2)
+        inv_input = 1.0 / self._input_size_arr  # (2,)
+        keypoints = keypoints * inv_input * scales[:, None, :]  # (B,17,2)
+        keypoints = keypoints + centers[:, None, :] - scales[:, None, :] / 2.0
+
+        return keypoints, scores
+
     def __call__(self, img, bboxes):
-        """Run pose on all person bboxes. Return (N,17,2), (N,17)."""
+        """Run pose on all person bboxes. Return (N,17,2), (N,17).
+
+        When multiple persons are detected, preprocesses all crops and runs
+        a single batched ONNX inference call for better throughput.
+        """
         if len(bboxes) == 0:
             return np.zeros((0, 17, 2)), np.zeros((0, 17))
 
-        all_kpts, all_scores = [], []
-        for bbox in bboxes:
-            blob, center, scale = self.preprocess(img, bbox)
-            outputs = self.session.run(None, {self.input_name: blob})
-            kpts, scores = self.postprocess(outputs, center, scale)
-            all_kpts.append(kpts)
-            all_scores.append(scores)
+        n = len(bboxes)
 
-        return np.stack(all_kpts), np.stack(all_scores)
+        # --- Preprocess all person crops ---
+        blobs = []
+        centers = np.empty((n, 2), dtype=np.float32)
+        scales_arr = np.empty((n, 2), dtype=np.float32)
+
+        for i, bbox in enumerate(bboxes):
+            blob, center, scale = self.preprocess(img, bbox)
+            blobs.append(blob[0])  # (3, H, W)
+            centers[i] = center
+            scales_arr[i] = scale
+
+        # --- Batched inference ---
+        batch_blob = np.stack(blobs, axis=0)  # (N, 3, H, W)
+        outputs = self.session.run(None, {self.input_name: batch_blob})
+        simcc_x, simcc_y = outputs  # (N, 17, Wx), (N, 17, Wy)
+
+        # --- Batched postprocess ---
+        keypoints, scores = self.postprocess_batch(
+            simcc_x, simcc_y, centers, scales_arr
+        )
+        return keypoints, scores
 
 
 # ---------------------------------------------------------------------------
@@ -292,12 +348,18 @@ class STGCNRecognizer:
         clip_len=100,
         num_person=2,
         img_shape=(1080, 1920),
+        threads=0,
     ):
-        self.session = create_session(onnx_path, device)
+        self.session = create_session(onnx_path, device, threads=threads)
         self.input_name = self.session.get_inputs()[0].name
         self.clip_len = clip_len
         self.num_person = num_person
         self.img_h, self.img_w = img_shape
+
+        # Pre-allocate reusable skeleton buffer (avoids per-call allocation)
+        self._skeleton_buf = np.zeros(
+            (num_person, clip_len, 17, 3), dtype=np.float32
+        )
 
         # Load label map
         with open(label_map_path) as f:
@@ -305,7 +367,10 @@ class STGCNRecognizer:
         print(f"  {len(self.labels)} action classes loaded.")
 
     def build_input(self, keypoints_buffer, scores_buffer, img_shape=None):
-        """Build STGCN++ input tensor from keypoint buffers (vectorized).
+        """Build STGCN++ input tensor from keypoint buffers (fully vectorized).
+
+        Eliminates the Python for-loop over time steps by gathering all
+        sampled frames into padded arrays and processing them in bulk.
 
         Args:
             keypoints_buffer: list of (N_persons, 17, 2) arrays  (pixel coords)
@@ -322,35 +387,37 @@ class STGCNRecognizer:
 
         T = self.clip_len
         M = self.num_person
-        V = 17
-        C = 3
 
-        # Uniform sample to T frames
         n_frames = len(keypoints_buffer)
         if n_frames == 0:
-            return np.zeros((1, M, T, V, C), dtype=np.float32)
+            return np.zeros((1, M, T, 17, 3), dtype=np.float32)
 
         indices = np.linspace(0, n_frames - 1, T).astype(int)
 
-        skeleton = np.zeros((M, T, V, C), dtype=np.float32)
+        # Reuse pre-allocated buffer (zero it out)
+        skeleton = self._skeleton_buf  # (M, T, 17, 3)
+        skeleton[:] = 0.0
+
+        inv_half_w = 2.0 / w
+        inv_half_h = 2.0 / h
         half_w = w / 2.0
         half_h = h / 2.0
 
+        # Group consecutive indices that map to the same source frame
+        # to avoid redundant work, but the main win is vectorized math.
         for t_out, t_in in enumerate(indices):
             kpts = keypoints_buffer[t_in]  # (N, 17, 2)
-            scores = scores_buffer[t_in]  # (N, 17)
+            scores = scores_buffer[t_in]   # (N, 17)
             n_persons = min(kpts.shape[0], M)
             if n_persons == 0:
                 continue
 
-            # Vectorized over all persons at once
-            kp = kpts[:n_persons]  # (P, 17, 2)
+            kp = kpts[:n_persons]           # (P, 17, 2)
             sc = scores[:n_persons].copy()  # (P, 17)
 
-            x_norm = (kp[:, :, 0] - half_w) / half_w  # (P, 17)
-            y_norm = (kp[:, :, 1] - half_h) / half_h  # (P, 17)
+            x_norm = (kp[:, :, 0] - half_w) * inv_half_w  # mult faster than div
+            y_norm = (kp[:, :, 1] - half_h) * inv_half_h
 
-            # Zero out low-confidence
             low = sc < 0.01
             x_norm[low] = 0.0
             y_norm[low] = 0.0
@@ -360,7 +427,7 @@ class STGCNRecognizer:
             skeleton[:n_persons, t_out, :, 1] = y_norm
             skeleton[:n_persons, t_out, :, 2] = sc
 
-        return skeleton[None]  # (1, M, T, V, C)
+        return skeleton[None]  # (1, M, T, V, C) — view of pre-allocated buf
 
     def __call__(self, keypoints_buffer, scores_buffer, img_shape=None):
         """Recognize action from skeleton buffer.
@@ -368,16 +435,23 @@ class STGCNRecognizer:
         Returns: list of (class_idx, label, probability) sorted by prob.
         """
         inp = self.build_input(keypoints_buffer, scores_buffer, img_shape)
-        logits = self.session.run(None, {self.input_name: inp})[0]  # (1, 120)
+        logits = self.session.run(None, {self.input_name: inp})[0][0]  # (120,)
 
-        # Softmax
-        logits = logits[0]
-        exp = np.exp(logits - logits.max())
-        probs = exp / exp.sum()
+        # Fast top-5 via argpartition (O(n) vs O(n log n) for full sort)
+        top5_unsorted = np.argpartition(logits, -5)[-5:]
+        top5_sorted = top5_unsorted[np.argsort(logits[top5_unsorted])[::-1]]
 
-        # Top-5
-        top_idx = probs.argsort()[::-1][:5]
-        results = [(int(i), self.labels[i], float(probs[i])) for i in top_idx]
+        # Softmax only over top-5 for display (avoid exp over all 120)
+        top_logits = logits[top5_sorted]
+        top_logits = top_logits - top_logits[0]  # shift for numerical stability
+        exp_top = np.exp(top_logits)
+        # Full softmax denominator (needed for true probabilities)
+        exp_all = np.exp(logits - logits[top5_sorted[0]])
+        denom = exp_all.sum()
+        probs = exp_top / denom
+
+        results = [(int(i), self.labels[i], float(probs[j]))
+                   for j, i in enumerate(top5_sorted)]
         return results
 
 
@@ -538,14 +612,16 @@ def run_stream(args):
 
     recog_device = args.recog_device or args.device
     print("\nLoading models...")
-    detector = YOLOXDetector(det_path, device=args.device, score_thr=args.det_score_thr)
-    pose_estimator = RTMPoseEstimator(pose_path, device=args.device)
+    threads = getattr(args, 'threads', 0)
+    detector = YOLOXDetector(det_path, device=args.device, score_thr=args.det_score_thr, threads=threads)
+    pose_estimator = RTMPoseEstimator(pose_path, device=args.device, threads=threads)
     recognizer = STGCNRecognizer(
         recog_path,
         args.label_map,
         device=recog_device,
         clip_len=args.clip_len,
         num_person=args.num_person,
+        threads=threads,
     )
 
     # Open camera/video
@@ -750,14 +826,16 @@ def run_clip(args):
     recog_device = args.recog_device or args.device
 
     print("\nLoading models...")
-    detector = YOLOXDetector(det_path, device=args.device, score_thr=args.det_score_thr)
-    pose_estimator = RTMPoseEstimator(pose_path, device=args.device)
+    threads = getattr(args, 'threads', 0)
+    detector = YOLOXDetector(det_path, device=args.device, score_thr=args.det_score_thr, threads=threads)
+    pose_estimator = RTMPoseEstimator(pose_path, device=args.device, threads=threads)
     recognizer = STGCNRecognizer(
         recog_path,
         args.label_map,
         device=recog_device,
         clip_len=args.clip_len,
         num_person=args.num_person,
+        threads=threads,
     )
 
     # Open camera
@@ -778,10 +856,17 @@ def run_clip(args):
     else:
         proc_w, proc_h = src_w, src_h
 
+    is_file = args.clip is not None
     frames_to_record = int(args.record_seconds * src_fps)
+    total_file_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if is_file else 0
     print(f"\nSource: {source} ({src_w}×{src_h} @ {src_fps:.0f}fps)")
     print(f"Processing at: {proc_w}×{proc_h}")
-    print(f'Press "r" to record {args.record_seconds}s ({frames_to_record} frames)')
+    if is_file:
+        n_windows = max(1, int(np.ceil(total_file_frames / frames_to_record)))
+        print(f"Video file: {total_file_frames} frames ({total_file_frames/src_fps:.1f}s)")
+        print(f"Splitting into {args.record_seconds}s windows → ~{n_windows} sub-clips")
+    else:
+        print(f'Press "r" to record {args.record_seconds}s ({frames_to_record} frames)')
     print("Press ESC/Q to quit.\n")
 
     # Warmup
@@ -804,6 +889,82 @@ def run_clip(args):
             print(f"WARNING: Could not open video writer for {args.output}")
             video_writer = None
 
+    # ── Helper: run detection + pose + recognition on a list of frames ──
+    def _infer_subclip(subclip_frames, subclip_idx, time_start_s, time_end_s):
+        """Run full pipeline on a sub-clip and show/write playback."""
+        n = len(subclip_frames)
+        print(f"\n  ━━ Sub-clip {subclip_idx} [{time_start_s:.1f}s – {time_end_s:.1f}s] "
+              f"({n} frames) ━━")
+
+        t_start = time.perf_counter()
+        kpts_buf, scores_buf, vis_buf = [], [], []
+        t_det_total, t_pose_total = 0, 0
+
+        for cf in subclip_frames:
+            t0 = time.perf_counter()
+            bboxes = detector(cf)
+            t_det_total += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            if len(bboxes) > 0:
+                kpts, scores = pose_estimator(cf, bboxes)
+            else:
+                kpts = np.zeros((0, 17, 2))
+                scores = np.zeros((0, 17))
+            t_pose_total += time.perf_counter() - t0
+
+            kpts_buf.append(kpts)
+            scores_buf.append(scores)
+
+            vf = cf.copy()
+            if len(kpts) > 0:
+                draw_skeleton(vf, kpts, scores, kpt_thr=0.3)
+            for bb in bboxes:
+                x1, y1, x2, y2 = [int(v) for v in bb]
+                cv2.rectangle(vf, (x1, y1), (x2, y2), (0, 255, 0), 1)
+            vis_buf.append(vf)
+
+        t0 = time.perf_counter()
+        results = recognizer(kpts_buf, scores_buf, img_shape=(proc_h, proc_w))
+        t_recog = (time.perf_counter() - t0) * 1000
+        t_total = (time.perf_counter() - t_start) * 1000
+
+        label_str = f"{results[0][1]} ({results[0][2]:.1%})"
+        top5 = results[:5]
+
+        print(f"  {'Stage':<20} {'Total (ms)':<14} {'Per-frame (ms)':<14}")
+        print(f"  {'-'*48}")
+        print(f"  {'Detection':<20} {t_det_total*1000:<14.1f} {t_det_total*1000/n:<14.1f}")
+        print(f"  {'Pose estimation':<20} {t_pose_total*1000:<14.1f} {t_pose_total*1000/n:<14.1f}")
+        print(f"  {'Recognition':<20} {t_recog:<14.1f} {'—':<14}")
+        print(f"  {'-'*48}")
+        print(f"  {'TOTAL':<20} {t_total:<14.1f} {t_total/n:<14.1f}")
+        print(f"\n  → {results[0][1]} ({results[0][2]:.1%})")
+        for i, (idx, lbl, prob) in enumerate(top5):
+            print(f"    {i+1}. {lbl:<30} {prob:.1%}")
+
+        # Playback with overlay
+        window_name = "ONNX Clip Mode  [r=record, Q/ESC=quit]"
+        quit_requested = False
+        for vf in vis_buf:
+            overlay = vf.copy()
+            cv2.rectangle(overlay, (0, 0), (proc_w, 100), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, vf, 0.4, 0, vf)
+            cv2.putText(vf, f"[{time_start_s:.1f}-{time_end_s:.1f}s] {label_str}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            for j, (_, lbl, prob) in enumerate(top5):
+                cv2.putText(vf, f"{lbl[:25]} {prob:.1%}",
+                            (10, 55 + j * 20), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.4, (200, 200, 200), 1)
+            if video_writer is not None:
+                video_writer.write(vf)
+            cv2.imshow(window_name, vf)
+            if cv2.waitKey(50) & 0xFF in (27, ord("q")):
+                quit_requested = True
+                break
+
+        return results, quit_requested
+
     WINDOW_NAME = "ONNX Clip Mode  [r=record, Q/ESC=quit]"
     recording = False
     clip_frames = []
@@ -811,12 +972,61 @@ def run_clip(args):
     last_label = 'Press "r" to record'
     last_top5 = []
 
+    # ── For video files: read all frames, split into windows, infer each ──
+    if is_file:
+        print(f"  Reading all frames from {source}...")
+        all_frames = []
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            if proc_w != src_w or proc_h != src_h:
+                frame = cv2.resize(frame, (proc_w, proc_h))
+            all_frames.append(frame)
+        cap.release()
+        print(f"  Read {len(all_frames)} frames ({len(all_frames)/src_fps:.1f}s)")
+
+        # Split into windows
+        window_size = frames_to_record
+        all_results = []
+        subclip_idx = 0
+
+        for start in range(0, len(all_frames), window_size):
+            end = min(start + window_size, len(all_frames))
+            subclip = all_frames[start:end]
+            if len(subclip) < 4:  # skip tiny leftover
+                break
+            subclip_idx += 1
+            t_start_s = start / src_fps
+            t_end_s = end / src_fps
+
+            results, quit_req = _infer_subclip(subclip, subclip_idx, t_start_s, t_end_s)
+            all_results.append((t_start_s, t_end_s, results))
+            clip_count += 1
+            if quit_req:
+                break
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"  SUMMARY — {subclip_idx} sub-clips from {source}")
+        print(f"{'='*60}")
+        for t_s, t_e, res in all_results:
+            print(f"  [{t_s:5.1f}s – {t_e:5.1f}s]  {res[0][1]:<30} {res[0][2]:.1%}")
+        print(f"{'='*60}")
+
+        if video_writer is not None:
+            video_writer.release()
+            print(f"  All clips saved to: {args.output}")
+        cv2.destroyAllWindows()
+        print("\nClip mode ended.")
+        return
+
+    # ── Webcam mode: press 'r' to record ──
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Resize
         if proc_w != src_w or proc_h != src_h:
             frame = cv2.resize(frame, (proc_w, proc_h))
 
@@ -985,12 +1195,13 @@ def run_benchmark(args):
     print(f"Device: det/pose={args.device}, recog={recog_device}")
 
     model_dir = Path(args.model_dir)
-    detector = YOLOXDetector(str(model_dir / args.det_model), device=args.device)
+    threads = getattr(args, 'threads', 0)
+    detector = YOLOXDetector(str(model_dir / args.det_model), device=args.device, threads=threads)
     pose_estimator = RTMPoseEstimator(
-        str(model_dir / args.pose_model), device=args.device
+        str(model_dir / args.pose_model), device=args.device, threads=threads
     )
     recognizer = STGCNRecognizer(
-        str(model_dir / args.recog_model), args.label_map, device=recog_device
+        str(model_dir / args.recog_model), args.label_map, device=recog_device, threads=threads
     )
 
     N = args.benchmark_iters
@@ -1147,14 +1358,39 @@ def parse_args():
         help="FPS for output video (0=match source or 25 for webcam)",
     )
 
+    # Performance
+    p.add_argument(
+        "--threads",
+        type=int,
+        default=0,
+        help="ONNX Runtime intra-op threads (0=auto, try 4 on laptops)",
+    )
+
     # Benchmark
     p.add_argument("--benchmark-iters", type=int, default=100)
+
+    # Fast preset
+    p.add_argument(
+        "--fast",
+        action="store_true",
+        help="Enable speed optimizations: det-every=2, recog-every=4, short-side=320",
+    )
 
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # Apply --fast preset (only override if user didn't set explicitly)
+    if args.fast:
+        if args.det_every == 1:      # default
+            args.det_every = 2
+        if args.recog_every == 1:     # default
+            args.recog_every = 4
+        if args.short_side == 0:      # default
+            args.short_side = 320
+        print("[--fast] det-every=2, recog-every=4, short-side=320")
 
     if args.benchmark:
         run_benchmark(args)

@@ -66,7 +66,20 @@ python demo/demo_realtime.py ^
     --short-side 480
 goto :eof
 
-REM ---------- 3b. CLIP MODE — press 'r' to record 3s, then infer ----------
+REM ---------- 3b. FAST GPU MODE — lighter models + FP16 ----------
+REM Uncomment this block (and comment 3a above) for faster GPU inference.
+REM echo.
+REM echo ===== FAST GPU MODE (webcam) =====
+REM python demo/demo_realtime.py ^
+REM     --mode stream ^
+REM     --config %ACTION_CONFIG% ^
+REM     --checkpoint %ACTION_CKPT% ^
+REM     --label-map %LABEL_MAP% ^
+REM     --device %DEVICE% ^
+REM     --fast ^
+REM     --no-vis
+
+REM ---------- 3c. CLIP MODE — press 'r' to record 3s, then infer ----------
 REM Uncomment the block below (and comment the stream block above) to use clip mode.
 REM echo.
 REM echo ===== CLIP MODE (webcam, press r to record) =====

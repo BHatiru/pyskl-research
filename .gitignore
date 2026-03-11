@@ -133,9 +133,21 @@ test.ipynb
 
 # ONNX model weights (download separately)
 demo/onnx_models/*.onnx
+# But keep our small FL-trained medical model (~2MB)
+!demo/onnx_models/stgcnpp_medical_federated.onnx
 # PyTorch checkpoints (download separately)
 demo/onnx_models/*.pth
 # Zip archives from model downloads
 demo/onnx_models/*.zip
 .cache/
 demo/demo_output.mp4
+
+# Demo1 generated/heavy files
+demo1_fed_skeleton/outputs/*.pt
+demo1_fed_skeleton/outputs/*.onnx
+demo1_fed_skeleton/data/
+demo1_fed_skeleton/__pycache__/
+demo1_fed_skeleton/models/__pycache__/
+
+# Test videos
+test/
