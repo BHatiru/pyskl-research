@@ -688,7 +688,7 @@ def run_stream(args):
     print("-" * 72)
 
     # Warmup
-    print("Warming up GPU...")
+    print("Warming up CPU...")
     dummy_img = np.random.randint(0, 255, (proc_h, proc_w, 3), dtype=np.uint8)
     for _ in range(3):
         detector(dummy_img)

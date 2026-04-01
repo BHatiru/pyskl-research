@@ -303,13 +303,60 @@ def parse_args():
         help="Subsample webcam capture to this FPS during recording "
         "(e.g. 15 = keep every 2nd frame from a 30fps cam)",
     )
+    p.add_argument(
+        "--fast",
+        action="store_true",
+        help="GPU-optimised preset: yolox-tiny detector, vipnas-mbv3 pose, "
+        "skip-frames=2, short-side=256. Overrides those individual flags.",
+    )
+    p.add_argument(
+        "--fp16",
+        action="store_true",
+        default=None,
+        help="Enable FP16 mixed-precision inference. "
+        "Auto-enabled on CUDA unless --no-fp16 is set.",
+    )
+    p.add_argument(
+        "--no-fp16",
+        action="store_true",
+        help="Disable FP16 even on CUDA.",
+    )
+    p.add_argument(
+        "--no-vis",
+        action="store_true",
+        help="Skip per-frame skeleton visualisation in stream mode "
+        "(saves ~10-30%% of inference time).",
+    )
+    p.add_argument(
+        "--warmup",
+        action="store_true",
+        default=None,
+        help="Run a dummy inference at startup to warm up CUDA kernels. "
+        "Auto-enabled on CUDA.",
+    )
     args = p.parse_args()
+
+    # --fast preset overrides
+    if args.fast:
+        args.detector = args.detector if args.det_config else "yolox-tiny"
+        args.pose_model = args.pose_model if args.pose_config else "vipnas-mbv3"
+        if args.skip_frames == 1:
+            args.skip_frames = 2
+        if args.short_side == 320:
+            args.short_side = 256
 
     # Auto-set detection threshold per detector if user didn't specify
     if args.det_score_thr is None:
         args.det_score_thr = {"faster-rcnn": 0.9, "yolox-tiny": 0.5, "none": 0.5}[
             args.detector
         ]
+
+    # Auto-enable GPU features when on CUDA
+    is_cuda = "cuda" in args.device
+    if args.fp16 is None:
+        args.fp16 = is_cuda and not args.no_fp16
+    if args.warmup is None:
+        args.warmup = is_cuda
 
     return args
 
@@ -362,10 +409,50 @@ class ActionRecognitionEngine:
 
         self.label_map = [l.strip() for l in open(args.label_map).readlines()]
         print(f"  → {len(self.label_map)} action classes loaded.")
-        print("All models loaded ✓\n")
+
+        # GPU-specific setup
+        self.use_fp16 = getattr(args, "fp16", False) and "cuda" in self.device
+        self.skip_vis = getattr(args, "no_vis", False)
+
+        if self.use_fp16:
+            print("  FP16 mixed-precision: ENABLED")
+            # Convert models to half-precision where safe
+            if self.det_model is not None:
+                self.det_model.half()
+            if self.pose_model is not None:
+                self.pose_model.half()
+            if self.recognizer is not None:
+                self.recognizer.half()
+
+        print("All models loaded ✓")
+
+        # Warm-up: run a tiny dummy inference to pre-compile CUDA kernels
+        if getattr(args, "warmup", False) and "cuda" in self.device:
+            self._warmup()
 
     # ------------------------------------------------------------------
-    def infer(self, frames):
+    def _warmup(self):
+        """Run dummy inference to warm up CUDA; first call is always slower."""
+        print("  Warming up CUDA kernels …", end="", flush=True)
+        dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+        try:
+            if self.det_model is not None:
+                with torch.no_grad():
+                    inference_detector(self.det_model, dummy)
+            if self.pose_model is not None:
+                with torch.no_grad():
+                    inference_top_down_pose_model(
+                        self.pose_model, dummy,
+                        [dict(bbox=np.array([0, 0, 63, 63, 1.0]))],
+                        format="xyxy",
+                    )
+            torch.cuda.synchronize()
+        except Exception:
+            pass  # warmup failure is non-critical
+        print(" done.")
+
+    # ------------------------------------------------------------------
+    def infer(self, frames, skip_vis=False):
         """Run the full pipeline on a list of BGR numpy frames.
 
         Returns
@@ -383,7 +470,7 @@ class ActionRecognitionEngine:
         num_frame = len(frames)
         print(f"  ┌ Inference on {num_frame} frames ({w}×{h}) ...")
 
-        # ----- Detection -----
+        # ----- Detection (batched on GPU when possible) -----
         t_det = time.time()
         det_results = []
         if self.no_det:
@@ -391,10 +478,27 @@ class ActionRecognitionEngine:
             full_box = np.array([[0, 0, w - 1, h - 1, 1.0]], dtype=np.float32)
             det_results = [full_box] * num_frame
         else:
-            for frame in frames:
-                res = inference_detector(self.det_model, frame)
-                res = res[0][res[0][:, 4] >= self.args.det_score_thr]
-                det_results.append(res)
+            # mmdet inference_detector accepts a list of images → batch forward
+            with torch.no_grad():
+                if self.use_fp16:
+                    with torch.cuda.amp.autocast():
+                        batch_det = inference_detector(self.det_model, frames)
+                else:
+                    batch_det = inference_detector(self.det_model, frames)
+            # batch_det: list of per-frame results (each is list-of-arrays)
+            if not isinstance(batch_det, (list, tuple)):
+                batch_det = [batch_det]
+            # Handle both single-frame (returns tuple of arrays) and
+            # batch (returns list of tuples) patterns from mmdet
+            for r in batch_det:
+                if isinstance(r, tuple):
+                    boxes = r[0]  # first class = person
+                elif isinstance(r, list):
+                    boxes = r[0]
+                else:
+                    boxes = r
+                boxes = boxes[boxes[:, 4] >= self.args.det_score_thr]
+                det_results.append(boxes)
         dt_det = time.time() - t_det
         persons = sum(len(d) for d in det_results)
         det_label = (
@@ -404,31 +508,43 @@ class ActionRecognitionEngine:
         )
         print(f"  │  Detection:   {dt_det:6.2f}s  {det_label}")
 
-        # ----- Pose estimation -----
+        # ----- Pose estimation (per-frame, GPU with optional FP16) -----
         t_pose = time.time()
         pose_results = []
-        for f, d in zip(frames, det_results):
-            d_list = [dict(bbox=x) for x in list(d)]
-            pose = inference_top_down_pose_model(
-                self.pose_model, f, d_list, format="xyxy"
-            )[0]
-            pose_results.append(pose)
+        with torch.no_grad():
+            for f, d in zip(frames, det_results):
+                d_list = [dict(bbox=x) for x in list(d)]
+                if self.use_fp16:
+                    with torch.cuda.amp.autocast():
+                        pose = inference_top_down_pose_model(
+                            self.pose_model, f, d_list, format="xyxy"
+                        )[0]
+                else:
+                    pose = inference_top_down_pose_model(
+                        self.pose_model, f, d_list, format="xyxy"
+                    )[0]
+                pose_results.append(pose)
         dt_pose = time.time() - t_pose
         print(
             f"  │  Pose est.:   {dt_pose:6.2f}s  "
             f"({dt_pose/num_frame*1000:.0f} ms/frame)"
         )
 
-        # ----- Render skeleton overlays -----
+        # ----- Render skeleton overlays (skippable for speed) -----
         t_vis = time.time()
         vis_frames = []
-        for f, poses in zip(frames, pose_results):
-            vis = vis_pose_result(
-                self.pose_model, f, poses, kpt_score_thr=0.3, radius=4, thickness=2
-            )
-            vis_frames.append(vis)
+        do_vis = not (skip_vis or self.skip_vis)
+        if do_vis:
+            for f, poses in zip(frames, pose_results):
+                vis = vis_pose_result(
+                    self.pose_model, f, poses, kpt_score_thr=0.3, radius=4, thickness=2
+                )
+                vis_frames.append(vis)
         dt_vis = time.time() - t_vis
-        print(f"  │  Skeleton viz:{dt_vis:6.2f}s")
+        if do_vis:
+            print(f"  │  Skeleton viz:{dt_vis:6.2f}s")
+        else:
+            print(f"  │  Skeleton viz: skipped")
 
         # ----- Build fake annotation -----
         fake_anno = dict(
@@ -465,9 +581,14 @@ class ActionRecognitionEngine:
             print(f"  └ No person detected")
             return "No person detected", [], time.time() - t0, vis_frames
 
-        # ----- Recognition -----
+        # ----- Recognition (with optional FP16) -----
         t_rec = time.time()
-        results = inference_recognizer(self.recognizer, fake_anno)
+        with torch.no_grad():
+            if self.use_fp16:
+                with torch.cuda.amp.autocast():
+                    results = inference_recognizer(self.recognizer, fake_anno)
+            else:
+                results = inference_recognizer(self.recognizer, fake_anno)
         dt_rec = time.time() - t_rec
         dt = time.time() - t0
 
@@ -574,7 +695,9 @@ def run_stream(engine, args):
             if args.skip_frames > 1:
                 raw_frames = raw_frames[:: args.skip_frames]
 
-            label, top5, dt, vis_frames = engine.infer(raw_frames)
+            label, top5, dt, vis_frames = engine.infer(
+                raw_frames, skip_vis=args.no_vis
+            )
             hz = 1.0 / dt if dt > 0 else 0
 
             # Keep the last skeleton-rendered frame for display
@@ -745,6 +868,15 @@ def main():
     if "cuda" in args.device and not torch.cuda.is_available():
         print("WARNING: CUDA not available, falling back to CPU.")
         args.device = "cpu"
+
+    # Print GPU info
+    if "cuda" in args.device:
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_mem / 1024**3
+        print(f"GPU: {gpu_name}  ({gpu_mem:.1f} GB)")
+        print(f"  FP16: {'ON' if args.fp16 else 'OFF'}  "
+              f"Warmup: {'ON' if args.warmup else 'OFF'}  "
+              f"Fast: {'ON' if args.fast else 'OFF'}")
 
     engine = ActionRecognitionEngine(args)
 
