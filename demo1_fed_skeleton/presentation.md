@@ -13,7 +13,7 @@ style: |
 <!-- _class: lead -->
 # Demo 1 — Federated Medical Action Recognition
 
-**Privacy-Preserving Fall Detection via Skeleton-Based FL**
+**Privacy-Preserving Medical HAR via Skeleton-Based FL**
 
 ---
 
@@ -88,7 +88,7 @@ The Colab notebook generates:
 - **Non-IID data distribution heatmap** — 5 clients × 10 medical classes
 - **4-panel FL analysis** — timeline, client heatmap, loss curves, summary
 - **Confusion matrix** with per-class accuracy bars
-- **Fall detection metrics** — recall, precision, F1, missed-fall analysis
+- **Per-class medical action metrics** — recall, precision, F1 for safety-critical actions
 
 ---
 
@@ -99,7 +99,7 @@ The Colab notebook generates:
 
 ## Demo Commands
 
-**Our medical FL model** (10 classes, fall detection):
+**Our medical FL model** (10 classes, patient monitoring):
 ```
 python demo/demo_onnx.py --device cpu --threads 4 --fast \
     --short-side 640 \
