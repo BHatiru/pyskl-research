@@ -33,6 +33,7 @@ Author: Research demo for advisor meeting
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -429,13 +430,21 @@ class STGCNRecognizer:
 
         return skeleton[None]  # (1, M, T, V, C) — view of pre-allocated buf
 
-    def __call__(self, keypoints_buffer, scores_buffer, img_shape=None):
+    def __call__(self, keypoints_buffer, scores_buffer, img_shape=None, raw_logits=False):
         """Recognize action from skeleton buffer.
 
-        Returns: list of (class_idx, label, probability) sorted by prob.
+        Args:
+            raw_logits: If True, return the raw logit array instead of top-5.
+                        Used by MedicalFilter for custom softmax over subset.
+
+        Returns: list of (class_idx, label, probability) sorted by prob,
+                 or raw logits array if raw_logits=True.
         """
         inp = self.build_input(keypoints_buffer, scores_buffer, img_shape)
         logits = self.session.run(None, {self.input_name: inp})[0][0]  # (120,)
+
+        if raw_logits:
+            return logits
 
         # Fast top-5 via argpartition (O(n) vs O(n log n) for full sort)
         top5_unsorted = np.argpartition(logits, -5)[-5:]
@@ -458,6 +467,124 @@ class STGCNRecognizer:
 # ---------------------------------------------------------------------------
 #  Skeleton drawing utilities
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+#  Medical emergency filter  (--medical flag)
+# ---------------------------------------------------------------------------
+
+
+class MedicalFilter:
+    """Remap NTU-120 logits to 15 medical emergency classes with tier alerts.
+
+    Loads demo/medical_label_map.json which maps NTU-120 indices to our
+    15-class 4-tier system (EMERGENCY / PAIN / SYMPTOM / NORMAL).
+    """
+
+    def __init__(self, json_path):
+        with open(json_path) as f:
+            cfg = json.load(f)
+
+        self.classes = cfg["classes"]
+        self.tiers = cfg["tiers"]
+
+        # NTU-120 indices we care about (order = medical_idx order)
+        self.ntu_indices = np.array([c["ntu120_idx"] for c in self.classes], dtype=int)
+        self.names = [c["name"] for c in self.classes]
+        self.tier_names = [c["tier"] for c in self.classes]
+        self.colors_bgr = [tuple(c["color_bgr"]) for c in self.classes]
+        self.n = len(self.classes)
+
+    def filter_logits(self, logits):
+        """Given full NTU-120 logits (120,), return filtered top-5 results.
+
+        Returns list of (medical_idx, name, prob, tier, color_bgr).
+        """
+        # Slice only our 15 classes
+        sub_logits = logits[self.ntu_indices]  # (15,)
+
+        # Softmax over only these 15
+        sub_logits = sub_logits - sub_logits.max()
+        exp_l = np.exp(sub_logits)
+        probs = exp_l / exp_l.sum()
+
+        top5_idx = np.argsort(probs)[::-1][:5]
+        results = []
+        for i in top5_idx:
+            results.append((
+                int(i),
+                self.names[i],
+                float(probs[i]),
+                self.tier_names[i],
+                self.colors_bgr[i],
+            ))
+        return results
+
+
+# ---------------------------------------------------------------------------
+#  Tier-aware HUD for medical mode
+# ---------------------------------------------------------------------------
+
+
+def draw_medical_hud(frame, results, fps, timings, frame_count, tiers_cfg):
+    """Draw heads-up display with tier-colored alert system."""
+    h, w = frame.shape[:2]
+
+    if not results:
+        return frame
+
+    top1_idx, top1_name, top1_prob, top1_tier, top1_color = results[0]
+    tier_info = tiers_cfg.get(top1_tier, {})
+    tier_action = tier_info.get("action", "")
+
+    # --- Alert banner at top (color depends on tier) ---
+    banner_h = 70
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, banner_h), top1_color, -1)
+    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, frame)
+
+    # Tier label (left)
+    tier_text = f"[{top1_tier}]"
+    cv2.putText(frame, tier_text, (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    # Action name + confidence (center-ish)
+    action_text = f"{top1_name}  {top1_prob:.0%}"
+    text_size = cv2.getTextSize(action_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+    text_x = max(10, (w - text_size[0]) // 2)
+    cv2.putText(frame, action_text, (text_x, 55),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+
+    # FPS (top-right)
+    cv2.putText(frame, f"FPS: {fps:.1f}", (w - 130, 25),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # --- Response action text ---
+    if tier_action and top1_tier != "NORMAL":
+        cv2.putText(frame, f">> {tier_action}", (10, banner_h + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, top1_color, 2)
+
+    # --- Emergency flash effect ---
+    if top1_tier == "EMERGENCY" and (frame_count // 8) % 2 == 0:
+        border = 6
+        cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), border)
+
+    # --- Top-5 sidebar ---
+    y_start = banner_h + 50
+    for i, (idx, name, prob, tier, color) in enumerate(results[:5]):
+        y = y_start + i * 28
+        bar_w = int(prob * 250)
+        cv2.rectangle(frame, (10, y - 14), (10 + bar_w, y + 8), color, -1)
+        cv2.putText(frame, f"{name} {prob:.0%}",
+                    (15, y + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (255, 255, 255), 1)
+
+    # --- Timing info (bottom-left, subtle) ---
+    timing_str = " | ".join(f"{k}: {v:.0f}ms" for k, v in timings.items())
+    cv2.putText(frame, timing_str, (10, h - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
+
+    return frame
+
 
 COCO_SKELETON = [
     (15, 13),
@@ -604,6 +731,15 @@ def run_stream(args):
     print("\n=== ONNX Real-Time Action Recognition ===")
     print(f"Device: {args.device}")
 
+    # Medical filter
+    med_filter = None
+    if args.medical:
+        med_json = Path(args.medical_map)
+        if not med_json.is_absolute():
+            med_json = Path(__file__).parent / med_json.name
+        med_filter = MedicalFilter(str(med_json))
+        print(f"  Medical mode: {med_filter.n} classes, 4-tier alert system")
+
     # Load models
     model_dir = Path(args.model_dir)
     det_path = str(model_dir / args.det_model)
@@ -741,9 +877,16 @@ def run_stream(args):
         if len(kpts_buffer) >= args.min_frames and (
             frame_count % recog_every == 0 or recog_every == 1
         ):
-            results = recognizer(
-                list(kpts_buffer), list(scores_buffer), img_shape=(proc_h, proc_w)
-            )
+            if med_filter is not None:
+                logits = recognizer(
+                    list(kpts_buffer), list(scores_buffer),
+                    img_shape=(proc_h, proc_w), raw_logits=True
+                )
+                results = med_filter.filter_logits(logits)
+            else:
+                results = recognizer(
+                    list(kpts_buffer), list(scores_buffer), img_shape=(proc_h, proc_w)
+                )
         timings["recog"] = (time.perf_counter() - t0) * 1000
 
         t_total = (time.perf_counter() - t_total_start) * 1000
@@ -758,7 +901,10 @@ def run_stream(args):
                 avg_timings[k] = avg_timings[k] * (1 - alpha) + timings[k] * alpha
 
         if frame_count % PRINT_EVERY == 0 or frame_count == 1:
-            action_str = results[0][1] if results else "—"
+            if med_filter is not None and results:
+                action_str = f"[{results[0][3]}] {results[0][1]}"
+            else:
+                action_str = results[0][1] if results else "—"
             print(
                 f"{frame_count:>6} "
                 f"{avg_timings['det']:>7.1f}ms "
@@ -779,7 +925,11 @@ def run_stream(args):
             x1, y1, x2, y2 = [int(v) for v in bbox]
             cv2.rectangle(vis_frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
-        draw_hud(vis_frame, results, current_fps, timings, frame_count)
+        if med_filter is not None:
+            draw_medical_hud(vis_frame, results, current_fps, timings,
+                             frame_count, med_filter.tiers)
+        else:
+            draw_hud(vis_frame, results, current_fps, timings, frame_count)
 
         # Write to output video
         if video_writer is not None:
@@ -817,6 +967,15 @@ def run_clip(args):
     """Clip mode: press 'r' to record a short clip, then run full pipeline."""
     print("\n=== ONNX Clip Mode — Record then Recognize ===")
     print(f"Device: {args.device}")
+
+    # Medical filter
+    med_filter = None
+    if args.medical:
+        med_json = Path(args.medical_map)
+        if not med_json.is_absolute():
+            med_json = Path(__file__).parent / med_json.name
+        med_filter = MedicalFilter(str(med_json))
+        print(f"  Medical mode: {med_filter.n} classes, 4-tier alert system")
 
     # Load models
     model_dir = Path(args.model_dir)
@@ -925,7 +1084,11 @@ def run_clip(args):
             vis_buf.append(vf)
 
         t0 = time.perf_counter()
-        results = recognizer(kpts_buf, scores_buf, img_shape=(proc_h, proc_w))
+        if med_filter is not None:
+            logits = recognizer(kpts_buf, scores_buf, img_shape=(proc_h, proc_w), raw_logits=True)
+            results = med_filter.filter_logits(logits)
+        else:
+            results = recognizer(kpts_buf, scores_buf, img_shape=(proc_h, proc_w))
         t_recog = (time.perf_counter() - t0) * 1000
         t_total = (time.perf_counter() - t_start) * 1000
 
@@ -940,8 +1103,8 @@ def run_clip(args):
         print(f"  {'-'*48}")
         print(f"  {'TOTAL':<20} {t_total:<14.1f} {t_total/n:<14.1f}")
         print(f"\n  → {results[0][1]} ({results[0][2]:.1%})")
-        for i, (idx, lbl, prob) in enumerate(top5):
-            print(f"    {i+1}. {lbl:<30} {prob:.1%}")
+        for i, r in enumerate(top5):
+            print(f"    {i+1}. {r[1]:<30} {r[2]:.1%}")
 
         # Playback with overlay
         window_name = "ONNX Clip Mode  [r=record, Q/ESC=quit]"
@@ -952,8 +1115,8 @@ def run_clip(args):
             cv2.addWeighted(overlay, 0.6, vf, 0.4, 0, vf)
             cv2.putText(vf, f"[{time_start_s:.1f}-{time_end_s:.1f}s] {label_str}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            for j, (_, lbl, prob) in enumerate(top5):
-                cv2.putText(vf, f"{lbl[:25]} {prob:.1%}",
+            for j, r in enumerate(top5):
+                cv2.putText(vf, f"{r[1][:25]} {r[2]:.1%}",
                             (10, 55 + j * 20), cv2.FONT_HERSHEY_SIMPLEX,
                             0.4, (200, 200, 200), 1)
             if video_writer is not None:
@@ -1086,9 +1249,16 @@ def run_clip(args):
 
                 # Recognition
                 t0 = time.perf_counter()
-                results = recognizer(
-                    kpts_buffer, scores_buffer, img_shape=(proc_h, proc_w)
-                )
+                if med_filter is not None:
+                    logits = recognizer(
+                        kpts_buffer, scores_buffer, img_shape=(proc_h, proc_w),
+                        raw_logits=True
+                    )
+                    results = med_filter.filter_logits(logits)
+                else:
+                    results = recognizer(
+                        kpts_buffer, scores_buffer, img_shape=(proc_h, proc_w)
+                    )
                 t_recog = (time.perf_counter() - t0) * 1000
                 t_total = (time.perf_counter() - t_start) * 1000
 
@@ -1109,8 +1279,8 @@ def run_clip(args):
                 print(f"  {'-'*48}")
                 print(f"  {'TOTAL':<20} {t_total:<14.1f} {t_total/n:<14.1f}")
                 print(f"\n  → {results[0][1]} ({results[0][2]:.1%})")
-                for i, (idx, lbl, prob) in enumerate(results[:5]):
-                    print(f"    {i+1}. {lbl:<30} {prob:.1%}")
+                for i, r in enumerate(results[:5]):
+                    print(f"    {i+1}. {r[1]:<30} {r[2]:.1%}")
 
                 # Show skeleton playback (and optionally record)
                 clip_count += 1
@@ -1129,10 +1299,10 @@ def run_clip(args):
                         (0, 255, 255),
                         2,
                     )
-                    for j, (_, lbl, prob) in enumerate(last_top5):
+                    for j, r in enumerate(last_top5):
                         cv2.putText(
                             vf,
-                            f"{lbl[:25]} {prob:.1%}",
+                            f"{r[1][:25]} {r[2]:.1%}",
                             (10, 60 + j * 20),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.4,
@@ -1374,6 +1544,18 @@ def parse_args():
         "--fast",
         action="store_true",
         help="Enable speed optimizations: det-every=2, recog-every=4, short-side=320",
+    )
+
+    # Medical mode
+    p.add_argument(
+        "--medical",
+        action="store_true",
+        help="Enable medical emergency mode: filter NTU-120 to 15 medical classes with tier alerts",
+    )
+    p.add_argument(
+        "--medical-map",
+        default="demo/medical_label_map.json",
+        help="Path to medical label map JSON (default: demo/medical_label_map.json)",
     )
 
     return p.parse_args()

@@ -1,0 +1,27 @@
+{
+    "description": "NTU-120 (0-indexed) -> 15-class medical emergency mapping",
+    "note": "ntu120_idx refers to the 0-based index in nturgbd_120.txt label file",
+    "classes": [
+        {"medical_idx": 0,  "ntu120_idx": 42, "name": "Falling",              "tier": "EMERGENCY", "color_bgr": [0, 0, 255]},
+        {"medical_idx": 1,  "ntu120_idx": 41, "name": "Staggering",           "tier": "EMERGENCY", "color_bgr": [0, 0, 255]},
+        {"medical_idx": 2,  "ntu120_idx": 47, "name": "Nausea / Vomiting",    "tier": "EMERGENCY", "color_bgr": [0, 0, 255]},
+        {"medical_idx": 3,  "ntu120_idx": 43, "name": "Touch Head (headache)",     "tier": "PAIN", "color_bgr": [0, 165, 255]},
+        {"medical_idx": 4,  "ntu120_idx": 44, "name": "Touch Chest (heart pain)",  "tier": "PAIN", "color_bgr": [0, 165, 255]},
+        {"medical_idx": 5,  "ntu120_idx": 45, "name": "Touch Back (backache)",     "tier": "PAIN", "color_bgr": [0, 165, 255]},
+        {"medical_idx": 6,  "ntu120_idx": 46, "name": "Touch Neck (neckache)",     "tier": "PAIN", "color_bgr": [0, 165, 255]},
+        {"medical_idx": 7,  "ntu120_idx": 40, "name": "Sneeze / Cough",       "tier": "SYMPTOM",  "color_bgr": [255, 136, 68]},
+        {"medical_idx": 8,  "ntu120_idx":  8, "name": "Standing Up",          "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 9,  "ntu120_idx":  7, "name": "Sitting Down",         "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 10, "ntu120_idx": 58, "name": "Walking (towards)",    "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 11, "ntu120_idx": 59, "name": "Walking (apart)",      "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 12, "ntu120_idx":  0, "name": "Drinking Water",       "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 13, "ntu120_idx":  1, "name": "Eating",               "tier": "NORMAL",   "color_bgr": [68, 221, 68]},
+        {"medical_idx": 14, "ntu120_idx": 27, "name": "Phone Call",           "tier": "NORMAL",   "color_bgr": [68, 221, 68]}
+    ],
+    "tiers": {
+        "EMERGENCY": {"priority": 0, "color_bgr": [0, 0, 255],    "color_hex": "#FF0000", "action": "Immediate nurse alert"},
+        "PAIN":      {"priority": 1, "color_bgr": [0, 165, 255],  "color_hex": "#FFA500", "action": "Nurse notify"},
+        "SYMPTOM":   {"priority": 2, "color_bgr": [255, 136, 68], "color_hex": "#4488FF", "action": "Log & monitor"},
+        "NORMAL":    {"priority": 3, "color_bgr": [68, 221, 68],  "color_hex": "#44DD44", "action": "No action"}
+    }
+}
