@@ -1,0 +1,67 @@
+{
+  "labels": [
+    "falling",
+    "staggering",
+    "nausea/vomiting",
+    "touch head (headache)",
+    "touch chest (chest pain)",
+    "touch back (backache)",
+    "touch neck (neckache)",
+    "sneeze/cough",
+    "standing up",
+    "sitting down",
+    "walking towards",
+    "walking apart",
+    "drink water",
+    "eat meal",
+    "phone call"
+  ],
+  "tiers": {
+    "EMERGENCY": [
+      0,
+      1,
+      2
+    ],
+    "PAIN": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "SYMPTOM": [
+      7
+    ],
+    "NORMAL": [
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14
+    ]
+  },
+  "class_to_tier": {
+    "0": "EMERGENCY",
+    "1": "EMERGENCY",
+    "2": "EMERGENCY",
+    "3": "PAIN",
+    "4": "PAIN",
+    "5": "PAIN",
+    "6": "PAIN",
+    "7": "SYMPTOM",
+    "8": "NORMAL",
+    "9": "NORMAL",
+    "10": "NORMAL",
+    "11": "NORMAL",
+    "12": "NORMAL",
+    "13": "NORMAL",
+    "14": "NORMAL"
+  },
+  "tier_colors": {
+    "EMERGENCY": "#FF0000",
+    "PAIN": "#FFA500",
+    "SYMPTOM": "#4488FF",
+    "NORMAL": "#44DD44"
+  }
+}
