@@ -11,35 +11,44 @@ Update this file after each significant experiment.
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Overall Accuracy | TBD | Single model trained on all data |
-| Fall Detection F1 | TBD | |
-| Mean Class Accuracy | TBD | |
+| Best Accuracy | **0.8949** | 20 epochs, SGD lr=0.01, MultiStepLR [10,15] |
+| Final Accuracy | 0.8807 | |
+| Training Time | 1516s | Colab T4 GPU |
+| Fall Detection F1 | TBD | Need to re-run with confusion matrix |
 
 ### FedAvg (5 clients, Dirichlet α=0.5)
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Overall Accuracy | TBD | 50 rounds, lr=0.01 |
+| Best Accuracy | **0.7719** | Peak at R20, then degrades |
+| Final Accuracy | 0.7195 | R50 |
+| Worst Client Acc (R50) | 0.5991 | |
+| Mean Client Acc (R50) | 0.7629 | |
+| Training Time | 4551s | 50 rounds, Colab T4 |
 | Fall Detection F1 | TBD | |
-| Worst Client Accuracy | TBD | |
-| Mean Client Accuracy | TBD | |
 
 ### FedBN (5 clients, Dirichlet α=0.5)
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Overall Accuracy | TBD | 50 rounds, lr=0.01, BN kept local |
+| Best Accuracy | **0.7636** | Slightly worse than FedAvg |
+| Final Accuracy | 0.7264 | R50 |
+| Worst Client Acc (R50) | 0.5926 | |
+| Mean Client Acc (R50) | 0.7529 | |
+| Training Time | 4546s | |
 | Fall Detection F1 | TBD | |
-| Worst Client Accuracy | TBD | |
-| Mean Client Accuracy | TBD | |
 
 ### Clustered FedBN
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Overall Accuracy | TBD | 50 rounds, 2 clusters, re-cluster every 5 rounds |
+| Best Accuracy | **0.7683** | Peak at R30 |
+| Final Accuracy | 0.7461 | Best final among FL methods |
+| Worst Client Acc (R50) | 0.6503 | Best fairness |
+| Mean Client Acc (R50) | 0.7422 | |
+| Training Time | 4550s | |
+| Clusters | [0,0,0,0,1] | Collapsed after R10 — client 4 isolated |
 | Fall Detection F1 | TBD | |
-| Worst Client Accuracy | TBD | |
 
 ---
 

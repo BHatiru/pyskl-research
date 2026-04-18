@@ -2,11 +2,11 @@
 
 ## What This Is
 
-A research workspace extending **PYSKL** (skeleton-based action recognition toolkit) with **federated learning** for privacy-preserving medical action recognition (fall detection, health monitoring). Built on PyTorch, Flower FL framework, and the STGCN++ family of graph convolutional networks.
+A research workspace extending **PYSKL** (skeleton-based action recognition toolkit) with **federated learning** for privacy-preserving medical action recognition (patient monitoring, emergency notification). Built on PyTorch, Flower FL framework, and the STGCN++ family of graph convolutional networks.
 
 ## Active Research
 
-- **Federated learning for medical action recognition** — privacy-preserving fall detection across simulated hospital clients
+- **Federated learning for medical action recognition** — privacy-preserving HAR for monitoring & emergency notification across simulated hospital clients
 - **New model architectures / methods** — improving GCN-based skeleton recognition
 
 ## Codebase Structure

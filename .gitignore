@@ -149,5 +149,24 @@ demo1_fed_skeleton/data/
 demo1_fed_skeleton/__pycache__/
 demo1_fed_skeleton/models/__pycache__/
 
+# NTU action dataset (large binary files — download separately)
+ntu_action_dataset/*.npy
+ntu_action_dataset/*.parquet
+ntu_action_dataset/integrated/
+ntu_action_dataset/integrated_v2/
+ntu_action_dataset/timeseries_chunk_*.parquet
+ntu_action_dataset/.DS_Store
+
+# Federated V2 — model checkpoints & heavy outputs
+federated_v2/saved_models/
+federated_v2/outputs_temporal/*.pt
+federated_v2/outputs_temporal/*.json
+
+# General binary/data exclusions
+*.npy
+*.npz
+*.parquet
+*.pth
+
 # Test videos
 test/

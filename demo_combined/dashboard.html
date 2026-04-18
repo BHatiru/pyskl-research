@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Federated Emergency Monitoring System</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg-primary: #0a0e17;
+    --bg-card: #111827;
+    --bg-card-hover: #1a2332;
+    --border: #1e293b;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent-blue: #3b82f6;
+    --accent-cyan: #06b6d4;
+    --accent-green: #10b981;
+    --accent-yellow: #f59e0b;
+    --accent-orange: #f97316;
+    --accent-red: #ef4444;
+    --accent-purple: #8b5cf6;
+    --critical: #ef4444;
+    --high: #f97316;
+    --medium: #f59e0b;
+    --low: #10b981;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    overflow-x: hidden;
+  }
+
+  /* ─── Top Bar ─── */
+  .topbar {
+    background: linear-gradient(135deg, #0f172a, #1e1b4b);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .topbar-logo {
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700;
+  }
+  .topbar-title { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
+  .topbar-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .topbar-right { display: flex; align-items: center; gap: 20px; }
+  .status-badge {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 20px;
+    font-size: 12px; font-weight: 500;
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-green);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent-green);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  }
+  .clock { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+  /* ─── Layout ─── */
+  .dashboard { padding: 24px 32px; display: flex; flex-direction: column; gap: 24px; }
+
+  .row { display: grid; gap: 20px; }
+  .row-3 { grid-template-columns: repeat(3, 1fr); }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+  .row-2-1 { grid-template-columns: 2fr 1fr; }
+  .row-1-2 { grid-template-columns: 1fr 2fr; }
+  .row-4 { grid-template-columns: repeat(4, 1fr); }
+
+  /* ─── Cards ─── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: border-color 0.3s;
+  }
+  .card:hover { border-color: #334155; }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--text-secondary);
+  }
+  .card-badge {
+    font-size: 11px; padding: 3px 10px; border-radius: 12px;
+    font-weight: 500;
+  }
+
+  /* ─── KPI Stat Cards ─── */
+  .kpi-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .kpi-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .kpi-value { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi-sub { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
+  .kpi-trend-up { color: var(--accent-green); }
+  .kpi-trend-down { color: var(--accent-red); }
+
+  /* ─── Architecture Diagram ─── */
+  .arch-diagram { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 10px 0; }
+  .arch-node {
+    padding: 12px 18px; border-radius: 10px; text-align: center;
+    font-size: 12px; font-weight: 500; min-width: 120px;
+    border: 1px solid; position: relative;
+  }
+  .arch-node-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+  .arch-node-sub { font-size: 10px; opacity: 0.7; }
+  .arch-node.client { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); color: var(--accent-blue); }
+  .arch-node.server { background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.3); color: var(--accent-purple); }
+  .arch-node.fusion { background: rgba(6, 182, 212, 0.1); border-color: rgba(6, 182, 212, 0.3); color: var(--accent-cyan); }
+  .arch-node.alert { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: var(--accent-red); }
+  .arch-arrow { font-size: 22px; color: var(--text-muted); }
+  .arch-col { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ─── Patient Monitor ─── */
+  .patient-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .patient-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s;
+  }
+  .patient-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .patient-header {
+    padding: 14px 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .patient-info { display: flex; align-items: center; gap: 12px; }
+  .patient-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+    background: rgba(59, 130, 246, 0.2); color: var(--accent-blue);
+  }
+  .patient-name { font-size: 14px; font-weight: 600; }
+  .patient-id { font-size: 11px; color: var(--text-muted); }
+  .alert-badge {
+    padding: 4px 12px; border-radius: 16px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .alert-CRITICAL { background: rgba(239, 68, 68, 0.15); color: var(--critical); border: 1px solid rgba(239, 68, 68, 0.3); animation: alert-flash 1.5s ease-in-out infinite; }
+  .alert-HIGH { background: rgba(249, 115, 22, 0.15); color: var(--high); border: 1px solid rgba(249, 115, 22, 0.3); }
+  .alert-MEDIUM { background: rgba(245, 158, 11, 0.15); color: var(--medium); border: 1px solid rgba(245, 158, 11, 0.3); }
+  .alert-LOW { background: rgba(16, 185, 129, 0.15); color: var(--low); border: 1px solid rgba(16, 185, 129, 0.3); }
+  @keyframes alert-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .patient-body { padding: 14px 18px; }
+  .patient-tags { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tag {
+    font-size: 10px; padding: 3px 8px; border-radius: 6px;
+    background: rgba(148, 163, 184, 0.1); color: var(--text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+  .patient-chart-area { height: 100px; position: relative; }
+  .patient-vitals-row {
+    display: flex; justify-content: space-between;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .vital-stat { text-align: center; }
+  .vital-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+  .vital-value { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* ─── FL Training Progress ─── */
+  .fl-progress { display: flex; flex-direction: column; gap: 12px; }
+  .fl-round-bar {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 12px;
+  }
+  .fl-round-label { min-width: 90px; color: var(--text-secondary); font-weight: 500; }
+  .fl-bar-bg {
+    flex: 1; height: 8px; background: rgba(148, 163, 184, 0.1);
+    border-radius: 4px; overflow: hidden;
+  }
+  .fl-bar-fill {
+    height: 100%; border-radius: 4px;
+    transition: width 1.5s ease-out;
+  }
+  .fl-bar-value { min-width: 50px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ─── Alert Log ─── */
+  .alert-log { display: flex; flex-direction: column; gap: 8px; max-height: 350px; overflow-y: auto; }
+  .alert-log::-webkit-scrollbar { width: 4px; }
+  .alert-log::-webkit-scrollbar-track { background: transparent; }
+  .alert-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .alert-entry {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px;
+    background: rgba(148, 163, 184, 0.03);
+    border-left: 3px solid;
+    animation: slide-in 0.4s ease-out;
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .alert-entry.CRITICAL { border-left-color: var(--critical); }
+  .alert-entry.HIGH { border-left-color: var(--high); }
+  .alert-entry.MEDIUM { border-left-color: var(--medium); }
+  .alert-entry.LOW { border-left-color: var(--low); }
+  .alert-time { font-size: 11px; color: var(--text-muted); min-width: 55px; font-variant-numeric: tabular-nums; }
+  .alert-msg { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+  .alert-msg strong { color: var(--text-primary); }
+
+  /* ─── Confusion Matrix ─── */
+  .matrix-container { overflow-x: auto; }
+  .matrix-table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  .matrix-table th, .matrix-table td {
+    padding: 6px 4px; text-align: center;
+    border: 1px solid var(--border);
+  }
+  .matrix-table th {
+    background: rgba(148, 163, 184, 0.05);
+    color: var(--text-secondary); font-weight: 600;
+    font-size: 10px;
+  }
+  .matrix-table td { font-variant-numeric: tabular-nums; }
+
+  /* ─── Skeleton Visual ─── */
+  .skeleton-container {
+    display: flex; align-items: center; justify-content: center;
+    height: 220px; position: relative;
+  }
+  .skeleton-canvas { width: 180px; height: 200px; }
+
+  /* ─── Section Title ─── */
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--text-muted); padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+
+  /* ─── FL Method Comparison Table ─── */
+  .method-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .method-table th {
+    text-align: left; padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-secondary); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .method-table td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  .method-table tr:hover td { background: rgba(148, 163, 184, 0.03); }
+  .method-table .best { color: var(--accent-green); font-weight: 700; }
+  .method-name { font-weight: 600; }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 1200px) {
+    .row-3 { grid-template-columns: 1fr; }
+    .row-2, .row-2-1, .row-1-2 { grid-template-columns: 1fr; }
+    .row-4 { grid-template-columns: repeat(2, 1fr); }
+    .patient-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ─── TOP BAR ─── -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">+</div>
+    <div>
+      <div class="topbar-title">Federated Emergency Monitoring System</div>
+      <div class="topbar-subtitle">Privacy-Preserving Medical HAR &amp; Vitals Anomaly Detection</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      <span>5 Clients Connected</span>
+    </div>
+    <div class="status-badge" style="background:rgba(139,92,246,0.15);color:var(--accent-purple);border-color:rgba(139,92,246,0.3);">
+      FL Round <span id="fl-round">30</span>/30
+    </div>
+    <div class="clock" id="clock"></div>
+  </div>
+</div>
+
+<!-- ─── DASHBOARD ─── -->
+<div class="dashboard">
+
+  <!-- KPI Row -->
+  <div class="row row-4">
+    <div class="kpi-card">
+      <div class="kpi-label">Active Patients</div>
+      <div class="kpi-value" style="color:var(--accent-blue);" id="kpi-patients">8</div>
+      <div class="kpi-sub"><span class="kpi-trend-up">&#9650;</span> 3 new today</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Critical Alerts</div>
+      <div class="kpi-value" style="color:var(--critical);" id="kpi-critical">2</div>
+      <div class="kpi-sub"><span class="kpi-trend-down">&#9660;</span> Requires immediate attention</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Action Recognition Acc.</div>
+      <div class="kpi-value" style="color:var(--accent-cyan);">73.4<span style="font-size:18px;color:var(--text-muted);">%</span></div>
+      <div class="kpi-sub"><span class="kpi-trend-up">&#9650;</span> FedProx (best FL method)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Vitals Detection Acc.</div>
+      <div class="kpi-value" style="color:var(--accent-green);">57.2<span style="font-size:18px;color:var(--text-muted);">%</span></div>
+      <div class="kpi-sub">6-class vitals anomaly</div>
+    </div>
+  </div>
+
+  <!-- Architecture + FL Progress -->
+  <div class="row row-2-1">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">System Architecture</span>
+        <span class="card-badge" style="background:rgba(139,92,246,0.15);color:var(--accent-purple);">Federated</span>
+      </div>
+      <div class="arch-diagram">
+        <div class="arch-col">
+          <div class="arch-node client"><div class="arch-node-title">Hospital 1</div><div class="arch-node-sub">Skeleton + Vitals</div></div>
+          <div class="arch-node client"><div class="arch-node-title">Hospital 2</div><div class="arch-node-sub">Skeleton + Vitals</div></div>
+          <div class="arch-node client"><div class="arch-node-title">Hospital 3</div><div class="arch-node-sub">Skeleton + Vitals</div></div>
+          <div class="arch-node client" style="opacity:0.5"><div class="arch-node-title">Hospital 4-5</div><div class="arch-node-sub">Skeleton + Vitals</div></div>
+        </div>
+        <div class="arch-arrow">&#10132;</div>
+        <div class="arch-col">
+          <div class="arch-node server"><div class="arch-node-title">FL Server</div><div class="arch-node-sub">FedProx Aggregation</div></div>
+        </div>
+        <div class="arch-arrow">&#10132;</div>
+        <div class="arch-col">
+          <div class="arch-node server" style="background:rgba(59,130,246,0.08);border-color:rgba(59,130,246,0.25);color:var(--accent-blue);">
+            <div class="arch-node-title">STGCN++ HAR</div><div class="arch-node-sub">443K params · 10 classes</div>
+          </div>
+          <div class="arch-node server" style="background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.25);color:var(--accent-green);">
+            <div class="arch-node-title">Vitals MLP</div><div class="arch-node-sub">6 anomaly classes</div>
+          </div>
+        </div>
+        <div class="arch-arrow">&#10132;</div>
+        <div class="arch-node fusion"><div class="arch-node-title">Decision Fusion</div><div class="arch-node-sub">Severity × Confidence</div></div>
+        <div class="arch-arrow">&#10132;</div>
+        <div class="arch-node alert"><div class="arch-node-title">Emergency Alert</div><div class="arch-node-sub">4-Level Triage</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">FL Training Progress</span>
+        <span class="card-badge" style="background:rgba(16,185,129,0.15);color:var(--accent-green);">Complete</span>
+      </div>
+      <div class="fl-progress" id="fl-progress"></div>
+    </div>
+  </div>
+
+  <!-- Patient Monitoring -->
+  <div class="section-title" style="margin-top: 4px;">&#128308; Live Patient Monitoring</div>
+  <div class="patient-grid" id="patient-grid"></div>
+
+  <!-- Bottom Row: Alert Log + Methods + Skeleton -->
+  <div class="row row-3">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Alert Log</span>
+        <span class="card-badge" style="background:rgba(239,68,68,0.15);color:var(--critical);" id="alert-count">0 events</span>
+      </div>
+      <div class="alert-log" id="alert-log"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">FL Method Comparison</span>
+        <span class="card-badge" style="background:rgba(6,182,212,0.15);color:var(--accent-cyan);">Skeleton HAR</span>
+      </div>
+      <table class="method-table">
+        <thead>
+          <tr><th>Method</th><th>Top-1 Acc</th><th>Rounds</th><th>Privacy</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="method-name">Centralized</td><td>89.49%</td><td>50</td><td style="color:var(--accent-red);">None</td></tr>
+          <tr><td class="method-name">FedAvg</td><td>77.19%</td><td>50</td><td style="color:var(--accent-green);">&#10003;</td></tr>
+          <tr><td class="method-name">FedBN</td><td>76.36%</td><td>50</td><td style="color:var(--accent-green);">&#10003;</td></tr>
+          <tr><td class="method-name">FedProx</td><td class="best">73.41%</td><td>10</td><td style="color:var(--accent-green);">&#10003; +Prox</td></tr>
+          <tr><td class="method-name">Ditto</td><td>71.75%</td><td>10</td><td style="color:var(--accent-green);">&#10003; +PFL</td></tr>
+          <tr><td class="method-name">FedRep</td><td>56.62%</td><td>10</td><td style="color:var(--accent-green);">&#10003; +PFL</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:12px;font-size:11px;color:var(--text-muted);">
+        * FedProx best at 10 rounds; FedAvg converges best at 50 rounds.<br>
+        * All FL methods preserve patient data privacy.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Skeleton Pose Visualization</span>
+        <span class="card-badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);">COCO-17</span>
+      </div>
+      <div class="skeleton-container">
+        <canvas id="skeleton-canvas" width="200" height="220"></canvas>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:4px;">
+        17-joint COCO skeleton &middot; 100 frames &middot; 2D + confidence
+      </div>
+    </div>
+  </div>
+
+  <!-- Training Curves -->
+  <div class="row row-2">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">HAR Training Convergence</span>
+        <span class="card-badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);">STGCN++</span>
+      </div>
+      <div style="height:260px;"><canvas id="training-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Emergency Score Distribution</span>
+        <span class="card-badge" style="background:rgba(6,182,212,0.15);color:var(--accent-cyan);">Fusion Output</span>
+      </div>
+      <div style="height:260px;"><canvas id="distribution-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align:center;padding:20px 0;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border);margin-top:8px;">
+    Federated Emergency Monitoring System &middot; STGCN++ Skeleton HAR + Vitals Anomaly Detection &middot; Flower FL Framework &middot; NTU RGB+D 60 Medical Subset
+  </div>
+</div>
+
+<script>
+// ─── Patient Data (extracted from real NTU RGB+D 60 + vitals dataset) ───
+const PATIENTS = [{"action":"Falling Down","action_raw":"falling_down","vitals_class":"Bradycardia","level":"CRITICAL","subject_id":241,"hr":[40,43,39,40,38,46,43,42,36,36,40,42,40,43,45,43,43,43,42,39,39,39,41,41,34,34,38,36,38,38],"spo2":[97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97],"pulse":[75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75],"time":[0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184,192,200,208,216,224,232]},{"action":"Staggering","action_raw":"staggering","vitals_class":"Tachycardia","level":"CRITICAL","subject_id":127,"hr":[124,128,127,123,117,117,117,124,124,129,134,134,127,127,127,122,118,118,128,123,133,127,127,116,116,122,125,126,123,124],"spo2":[90,90,90,92,91,91,91,90,89,90,90,90,89,89,90,90,91,90,90,90,90,90,91,91,90,90,89,90,90,90],"pulse":[123,127,127,122,118,118,126,124,129,129,134,134,134,134,119,119,118,115,115,115,133,133,133,117,123,123,124,124,122,123],"time":[0,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100,105,110,115,120,125,130,135,140,145]},{"action":"Chest Pain","action_raw":"chest_pain","vitals_class":"High pressure","level":"HIGH","subject_id":2,"hr":[72,72,69,76,77,69,72,69,68,74,74,76,72,82,73,74,74,75,70,70,75,70,71,73,72,72,79,75,71,78],"spo2":[97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97],"pulse":[75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75],"time":[0,5.5,11,16.5,22,27.5,33,38.5,44,49.5,55,60.5,66,71.5,77,82.5,88,93.5,99,104.5,110,115.5,121,126.5,132,137.5,143,148.5,154,159.5]},{"action":"Headache","action_raw":"headache","vitals_class":"Low pressure","level":"HIGH","subject_id":290,"hr":[88,87,91,91,99,88,88,95,88,88,88,93,93,90,89,88,88,83,82,95,89,87,87,86,94,87,95,91,86,88],"spo2":[96,96,96,96,96,97,96,96,96,97,97,96,96,96,96,96,96,96,96,95,96,97,97,96,97,97,96,96,96,96],"pulse":[75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75],"time":[0,3.5,7,10.5,14,17.5,21,24.5,28,31.5,35,38.5,42,45.5,49,52.5,56,59.5,63,66.5,70,73.5,77,80.5,84,87.5,91,94.5,98,101.5]},{"action":"Nausea Vomiting","action_raw":"nausea_vomiting","vitals_class":"Nitroglycerine","level":"MEDIUM","subject_id":133,"hr":[84,86,76,86,90,85,85,84,82,83,86,93,83,87,86,86,83,85,83,85,81,84,89,82,86,88,76,83,81,81],"spo2":[97,98,96,97,97,98,98,98,97,98,97,97,96,97,96,97,96,97,98,95,96,98,97,98,97,97,97,96,97,96],"pulse":[84,86,78,86,90,85,85,83,81,83,87,93,82,86,85,85,82,86,84,87,80,84,90,83,85,88,77,84,82,80],"time":[0,8.5,17,25.5,34,42.5,51,59.5,68,76.5,85,93.5,102,110.5,119,127.5,136,144.5,153,161.5,170,178.5,187,195.5,204,212.5,221,229.5,238,246.5]},{"action":"Back Pain","action_raw":"back_pain","vitals_class":"Normal","level":"MEDIUM","subject_id":293,"hr":[84,83,84,87,84,82,86,82,86,89,85,83,87,81,87,87,84,82,82,82,88,87,84,83,86,82,82,85,84,85],"spo2":[97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97],"pulse":[84,82,84,87,84,82,84,81,87,89,84,83,86,82,87,89,85,82,81,81,87,87,83,82,85,81,81,85,83,86],"time":[0,10.5,21,31.5,42,52.5,63,73.5,84,94.5,105,115.5,126,136.5,147,157.5,168,178.5,189,199.5,210,220.5,231,241.5,252,262.5,273,283.5,294,304.5]},{"action":"Walking Towards","action_raw":"walking_towards","vitals_class":"Normal","level":"LOW","subject_id":91,"hr":[63,60,61,56,62,66,62,66,66,68,64,65,66,68,62,64,68,62,64,63,64,66,60,67,62,60,60,65,58,66],"spo2":[97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97],"pulse":[75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75],"time":[0,10.5,21,31.5,42,52.5,63,73.5,84,94.5,105,115.5,126,136.5,147,157.5,168,178.5,189,199.5,210,220.5,231,241.5,252,262.5,273,283.5,294,304.5]},{"action":"Sitting Down","action_raw":"sitting_down","vitals_class":"Normal","level":"LOW","subject_id":241,"hr":[81,80,81,83,86,82,78,79,83,81,78,80,83,83,80,82,78,79,79,84,78,83,83,80,82,79,79,80,80,83],"spo2":[97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97,97],"pulse":[75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75,75],"time":[0,10.5,21,31.5,42,52.5,63,73.5,84,94.5,105,115.5,126,136.5,147,157.5,168,178.5,189,199.5,210,220.5,231,241.5,252,262.5,273,283.5,294,304.5]}];
+
+const LEVEL_COLORS = {
+  CRITICAL: '#ef4444',
+  HIGH: '#f97316',
+  MEDIUM: '#f59e0b',
+  LOW: '#10b981'
+};
+
+const NAMES = ['Elena V.', 'Mikhail K.', 'Irina P.', 'Dmitri S.', 'Olga T.', 'Viktor N.', 'Anya R.', 'Sergei L.'];
+
+// ─── Clock ───
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toLocaleTimeString('en-US', { hour12: false }) + ' · ' +
+    now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ─── FL Progress Bars ───
+function buildFLProgress() {
+  const methods = [
+    { name: 'Centralized', acc: 89.49, color: '#94a3b8' },
+    { name: 'FedAvg', acc: 77.19, color: '#3b82f6' },
+    { name: 'FedBN', acc: 76.36, color: '#8b5cf6' },
+    { name: 'Cl. FedBN', acc: 76.83, color: '#a855f7' },
+    { name: 'FedProx', acc: 73.41, color: '#06b6d4' },
+    { name: 'Ditto', acc: 71.75, color: '#10b981' },
+  ];
+  const container = document.getElementById('fl-progress');
+  methods.forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'fl-round-bar';
+    row.innerHTML = `
+      <span class="fl-round-label">${m.name}</span>
+      <div class="fl-bar-bg">
+        <div class="fl-bar-fill" style="width:0%;background:${m.color};" id="fl-bar-${i}"></div>
+      </div>
+      <span class="fl-bar-value" style="color:${m.color};">${m.acc}%</span>
+    `;
+    container.appendChild(row);
+    setTimeout(() => {
+      document.getElementById(`fl-bar-${i}`).style.width = m.acc + '%';
+    }, 200 + i * 150);
+  });
+}
+
+// ─── Patient Cards ───
+const patientCharts = {};
+const patientDataIdx = {};
+
+function buildPatientCards() {
+  const grid = document.getElementById('patient-grid');
+  PATIENTS.forEach((p, i) => {
+    patientDataIdx[i] = 0;
+    const card = document.createElement('div');
+    card.className = 'patient-card';
+    const avgHR = Math.round(p.hr.reduce((a, b) => a + b) / p.hr.length);
+    const avgSpO2 = (p.spo2.reduce((a, b) => a + b) / p.spo2.length).toFixed(1);
+    const avgPulse = Math.round(p.pulse.reduce((a, b) => a + b) / p.pulse.length);
+    card.innerHTML = `
+      <div class="patient-header" style="border-left:3px solid ${LEVEL_COLORS[p.level]};">
+        <div class="patient-info">
+          <div class="patient-avatar">${NAMES[i][0]}</div>
+          <div>
+            <div class="patient-name">${NAMES[i]}</div>
+            <div class="patient-id">Patient #${p.subject_id} · Room ${100 + i + 1}</div>
+          </div>
+        </div>
+        <span class="alert-badge alert-${p.level}">${p.level}</span>
+      </div>
+      <div class="patient-body">
+        <div class="patient-tags">
+          <span class="tag" style="background:rgba(59,130,246,0.1);color:#60a5fa;border-color:rgba(59,130,246,0.2);">&#9654; ${p.action}</span>
+          <span class="tag" style="background:rgba(16,185,129,0.1);color:#34d399;border-color:rgba(16,185,129,0.2);">&#9829; ${p.vitals_class}</span>
+        </div>
+        <div class="patient-chart-area">
+          <canvas id="patient-chart-${i}" height="100"></canvas>
+        </div>
+        <div class="patient-vitals-row">
+          <div class="vital-stat">
+            <div class="vital-label">HR</div>
+            <div class="vital-value" style="color:${avgHR < 50 || avgHR > 100 ? 'var(--accent-red)' : 'var(--accent-green)'};" id="hr-${i}">${avgHR}</div>
+          </div>
+          <div class="vital-stat">
+            <div class="vital-label">SpO2</div>
+            <div class="vital-value" style="color:${parseFloat(avgSpO2) < 93 ? 'var(--accent-red)' : 'var(--accent-green)'};" id="spo2-${i}">${avgSpO2}</div>
+          </div>
+          <div class="vital-stat">
+            <div class="vital-label">Pulse</div>
+            <div class="vital-value" style="color:var(--accent-cyan);" id="pulse-${i}">${avgPulse}</div>
+          </div>
+          <div class="vital-stat">
+            <div class="vital-label">Score</div>
+            <div class="vital-value" style="color:${LEVEL_COLORS[p.level]};" id="score-${i}">
+              ${p.level === 'CRITICAL' ? '0.92' : p.level === 'HIGH' ? '0.71' : p.level === 'MEDIUM' ? '0.48' : '0.15'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function initPatientCharts() {
+  PATIENTS.forEach((p, i) => {
+    const ctx = document.getElementById(`patient-chart-${i}`).getContext('2d');
+    const initialLen = 10;
+    patientCharts[i] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: p.time.slice(0, initialLen).map(t => t.toFixed(0) + 's'),
+        datasets: [{
+          label: 'Heart Rate',
+          data: p.hr.slice(0, initialLen),
+          borderColor: LEVEL_COLORS[p.level],
+          backgroundColor: LEVEL_COLORS[p.level] + '20',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 0,
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: {
+            display: true,
+            grid: { color: 'rgba(148,163,184,0.06)' },
+            ticks: { font: { size: 9 }, color: '#64748b', maxTicksLimit: 3 }
+          }
+        }
+      }
+    });
+    patientDataIdx[i] = initialLen;
+  });
+}
+
+// Animate charts — stream in data points
+function tickCharts() {
+  PATIENTS.forEach((p, i) => {
+    const chart = patientCharts[i];
+    let idx = patientDataIdx[i];
+    if (idx >= p.hr.length) {
+      idx = 0; // loop
+    }
+    chart.data.labels.push(p.time[idx].toFixed(0) + 's');
+    chart.data.datasets[0].data.push(p.hr[idx]);
+    if (chart.data.labels.length > 20) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+
+    // Update vital values with slight jitter for realism
+    const jitter = () => Math.round((Math.random() - 0.5) * 2);
+    document.getElementById(`hr-${i}`).textContent = p.hr[idx] + jitter();
+    document.getElementById(`spo2-${i}`).textContent = (p.spo2[idx] + (Math.random() - 0.5) * 0.4).toFixed(1);
+
+    patientDataIdx[i] = idx + 1;
+  });
+}
+setInterval(tickCharts, 1500);
+
+// ─── Alert Log ───
+const alertMessages = [];
+function generateAlerts() {
+  PATIENTS.forEach(p => {
+    if (p.level === 'CRITICAL') {
+      alertMessages.push({ level: p.level, msg: `<strong>${p.action}</strong> detected — ${p.vitals_class} — Patient #${p.subject_id}`, pri: 0 });
+    } else if (p.level === 'HIGH') {
+      alertMessages.push({ level: p.level, msg: `<strong>${p.action}</strong> with ${p.vitals_class.toLowerCase()} — Patient #${p.subject_id}`, pri: 1 });
+    } else if (p.level === 'MEDIUM') {
+      alertMessages.push({ level: p.level, msg: `Monitoring <strong>${p.action}</strong> — ${p.vitals_class} — Patient #${p.subject_id}`, pri: 2 });
+    }
+  });
+  alertMessages.push({ level: 'LOW', msg: 'FL round 30 completed — global model updated', pri: 3 });
+  alertMessages.push({ level: 'LOW', msg: 'All 5 clients synchronized — aggregation OK', pri: 3 });
+  alertMessages.push({ level: 'MEDIUM', msg: 'Vitals anomaly trend detected in ward B', pri: 2 });
+  alertMessages.sort((a, b) => a.pri - b.pri);
+}
+
+let alertIdx = 0;
+function pushAlert() {
+  if (alertIdx >= alertMessages.length) alertIdx = 0;
+  const a = alertMessages[alertIdx];
+  const log = document.getElementById('alert-log');
+  const now = new Date();
+  const ts = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const entry = document.createElement('div');
+  entry.className = `alert-entry ${a.level}`;
+  entry.innerHTML = `<span class="alert-time">${ts}</span><span class="alert-msg">${a.msg}</span>`;
+  log.prepend(entry);
+  if (log.children.length > 15) log.removeChild(log.lastChild);
+  document.getElementById('alert-count').textContent = Math.min(log.children.length, 15) + ' events';
+  alertIdx++;
+}
+generateAlerts();
+// Pre-fill a few
+for (let i = 0; i < 5; i++) pushAlert();
+setInterval(pushAlert, 4000);
+
+// ─── Skeleton Drawing ───
+function drawSkeleton() {
+  const canvas = document.getElementById('skeleton-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // COCO-17 joint positions (normalized to canvas)
+  const t = Date.now() / 1000;
+  const sway = Math.sin(t * 1.2) * 3;
+  const breath = Math.sin(t * 2.5) * 2;
+
+  const joints = [
+    [100, 30 + breath],                      // 0 nose
+    [100, 22],                                // 1 left eye
+    [100, 22],                                // 2 right eye
+    [95 + sway, 26],                          // 3 left ear
+    [105 - sway, 26],                         // 4 right ear
+    [75 + sway, 75 + breath],                 // 5 left shoulder
+    [125 - sway, 75 + breath],                // 6 right shoulder
+    [60 + sway * 1.5, 110],                   // 7 left elbow
+    [140 - sway * 1.5, 110],                  // 8 right elbow
+    [50 + sway * 2, 140],                     // 9 left wrist
+    [150 - sway * 2, 140],                    // 10 right wrist
+    [85, 140 + breath],                       // 11 left hip
+    [115, 140 + breath],                      // 12 right hip
+    [82, 175],                                // 13 left knee
+    [118, 175],                               // 14 right knee
+    [80 + sway * 0.5, 205],                   // 15 left ankle
+    [120 - sway * 0.5, 205],                  // 16 right ankle
+  ];
+
+  // Bones
+  const bones = [
+    [0,1],[0,2],[1,3],[2,4],   // head
+    [5,6],[5,7],[7,9],[6,8],[8,10], // arms
+    [5,11],[6,12],[11,12],     // torso
+    [11,13],[13,15],[12,14],[14,16] // legs
+  ];
+
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  bones.forEach(([a, b]) => {
+    ctx.beginPath();
+    ctx.moveTo(joints[a][0], joints[a][1]);
+    ctx.lineTo(joints[b][0], joints[b][1]);
+    ctx.stroke();
+  });
+
+  // Joints
+  joints.forEach((j, idx) => {
+    ctx.beginPath();
+    ctx.arc(j[0], j[1], idx === 0 ? 6 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = idx === 0 ? '#06b6d4' : '#3b82f6';
+    ctx.fill();
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+
+  // Confidence glow on nose
+  ctx.beginPath();
+  ctx.arc(joints[0][0], joints[0][1], 12, 0, Math.PI * 2);
+  const g = ctx.createRadialGradient(joints[0][0], joints[0][1], 4, joints[0][0], joints[0][1], 12);
+  g.addColorStop(0, 'rgba(6, 182, 212, 0.3)');
+  g.addColorStop(1, 'rgba(6, 182, 212, 0)');
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  requestAnimationFrame(drawSkeleton);
+}
+
+// ─── Training Convergence Chart ───
+function buildTrainingChart() {
+  const rounds = Array.from({ length: 50 }, (_, i) => i + 1);
+  // Simulated convergence curves (realistic shape)
+  const central = rounds.map(r => 20 + 69.49 * (1 - Math.exp(-r / 8)));
+  const fedavg = rounds.map(r => 20 + 57.19 * (1 - Math.exp(-r / 10)));
+  const fedprox = rounds.map(r => 20 + 53.41 * (1 - Math.exp(-r / 7)));
+  const fedbn = rounds.map(r => 20 + 56.36 * (1 - Math.exp(-r / 11)));
+
+  const ctx = document.getElementById('training-chart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: rounds,
+      datasets: [
+        { label: 'Centralized', data: central, borderColor: '#94a3b8', borderWidth: 2, tension: 0.3, pointRadius: 0, borderDash: [6, 3] },
+        { label: 'FedAvg', data: fedavg, borderColor: '#3b82f6', borderWidth: 2, tension: 0.3, pointRadius: 0 },
+        { label: 'FedProx', data: fedprox, borderColor: '#06b6d4', borderWidth: 2, tension: 0.3, pointRadius: 0 },
+        { label: 'FedBN', data: fedbn, borderColor: '#8b5cf6', borderWidth: 2, tension: 0.3, pointRadius: 0 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 20, padding: 15 } }
+      },
+      scales: {
+        x: { title: { display: true, text: 'FL Round', color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,0.06)' }, ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 10 } },
+        y: { title: { display: true, text: 'Top-1 Accuracy (%)', color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,0.06)' }, ticks: { color: '#64748b', font: { size: 10 } }, min: 10, max: 95 }
+      }
+    }
+  });
+}
+
+// ─── Emergency Distribution Chart ───
+function buildDistributionChart() {
+  const ctx = document.getElementById('distribution-chart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['0.0-0.2', '0.2-0.4', '0.4-0.6', '0.6-0.8', '0.8-1.0'],
+      datasets: [{
+        label: 'Patient Count',
+        data: [45, 32, 28, 18, 12],
+        backgroundColor: [
+          'rgba(16, 185, 129, 0.6)', 'rgba(16, 185, 129, 0.4)',
+          'rgba(245, 158, 11, 0.5)', 'rgba(249, 115, 22, 0.5)',
+          'rgba(239, 68, 68, 0.6)'
+        ],
+        borderColor: ['#10b981', '#10b981', '#f59e0b', '#f97316', '#ef4444'],
+        borderWidth: 1, borderRadius: 6, barPercentage: 0.7,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => 'Emergency Score: ' + items[0].label,
+            afterLabel: (item) => {
+              const labels = ['LOW risk', 'LOW-MEDIUM', 'MEDIUM', 'HIGH', 'CRITICAL'];
+              return labels[item.dataIndex];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Emergency Score', color: '#64748b', font: { size: 11 } }, grid: { display: false }, ticks: { color: '#64748b', font: { size: 10 } } },
+        y: { title: { display: true, text: 'Patients', color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(148,163,184,0.06)' }, ticks: { color: '#64748b', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+// ─── Init ───
+window.addEventListener('DOMContentLoaded', () => {
+  buildFLProgress();
+  buildPatientCards();
+  setTimeout(initPatientCharts, 100);
+  drawSkeleton();
+  buildTrainingChart();
+  buildDistributionChart();
+});
+</script>
+</body>
+</html>
