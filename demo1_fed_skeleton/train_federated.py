@@ -26,10 +26,13 @@ python export_onnx.py --checkpoint outputs/global_model.pt --output outputs/mode
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
 import sys
+import time
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -46,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models.stgcn import build_model, count_parameters  # noqa: E402
 from fl.client import SkeletonClient                      # noqa: E402
 from fl.strategy_fsar import FSARStrategy                  # noqa: E402
+from prepare_medical_data import MEDICAL_LABELS            # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,18 +65,23 @@ def evaluate_global(
     model: nn.Module,
     test_loader: DataLoader,
     device: torch.device,
-) -> Tuple[float, float]:
+) -> Tuple[float, float, list, list]:
+    """Evaluate on global test set, returning loss, acc, preds, labels."""
     model.eval()
     correct, total, cum_loss = 0, 0, 0.0
     criterion = nn.CrossEntropyLoss()
+    all_preds, all_labels = [], []
     with torch.no_grad():
         for xb, yb in test_loader:
             xb, yb = xb.to(device), yb.to(device)
             logits = model(xb)
             cum_loss += criterion(logits, yb).item() * yb.size(0)
-            correct += (logits.argmax(1) == yb).sum().item()
+            preds = logits.argmax(1)
+            correct += (preds == yb).sum().item()
             total += yb.size(0)
-    return cum_loss / max(total, 1), correct / max(total, 1)
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(yb.cpu().tolist())
+    return cum_loss / max(total, 1), correct / max(total, 1), all_preds, all_labels
 
 
 # ─────────────────── client factory for Flower simulation ────────────────────
@@ -86,6 +95,7 @@ def make_client_fn(
     epochs_per_round: int,
     lr: float,
     batch_size: int,
+    mu: float,
     model_kwargs: dict,
 ):
     """Return a factory ``fn(context) -> fl.client.Client``.
@@ -111,6 +121,7 @@ def make_client_fn(
             epochs_per_round=epochs_per_round,
             lr=lr,
             batch_size=batch_size,
+            mu=mu,
             model_kwargs=model_kwargs,
         ).to_client()
 
@@ -125,7 +136,7 @@ def main():
     parser.add_argument("--num-rounds", type=int, default=30)
     parser.add_argument("--num-clients", "-K", type=int, default=None,
                         help="Auto-detected from data dir if omitted.")
-    parser.add_argument("--mode", choices=["fedavg", "fedbn", "cluster"],
+    parser.add_argument("--mode", choices=["fedavg", "fedbn", "cluster", "fedprox"],
                         default="fedbn")
     parser.add_argument("--num-classes", type=int, default=10)
     parser.add_argument("--in-channels", type=int, default=3)
@@ -134,17 +145,31 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--epochs-per-round", type=int, default=1)
     parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--mu", type=float, default=0.01,
+                        help="FedProx proximal term coefficient (only used with --mode fedprox)")
+    parser.add_argument("--graph", type=str, default="coco",
+                        choices=["coco", "ntu"],
+                        help="Skeleton graph: coco (17j) or ntu (25j)")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--num-clusters", type=int, default=2)
     parser.add_argument("--cluster-every", type=int, default=5)
     parser.add_argument("--output-dir", type=str, default="outputs")
     parser.add_argument("--base-channels", type=int, default=64)
     parser.add_argument("--num-stages", type=int, default=6)
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Experiment tag for output naming (auto-generated if omitted)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Experiment tag for file naming
+    skeleton = '3d' if args.graph == 'ntu' else '2d'
+    tag = args.tag or f"fl_{args.mode}_{skeleton}_{args.num_classes}cls"
+    if args.mode == 'fedprox':
+        tag_default = f"fl_fedprox_mu{args.mu}_{skeleton}_{args.num_classes}cls"
+        tag = args.tag or tag_default
 
     # ── Detect number of clients ──
     if args.num_clients is None:
@@ -163,11 +188,13 @@ def main():
         base_channels=args.base_channels,
         num_stages=args.num_stages,
         num_person=args.num_person,
+        graph=args.graph,
     )
 
     device_str = args.device
     device = torch.device(device_str)
     local_bn = args.mode in ("fedbn", "cluster")
+    mu = args.mu if args.mode == "fedprox" else 0.0
 
     # ── Build a reference model to get initial parameters ──
     ref_model = build_model(num_classes=args.num_classes,
@@ -209,13 +236,15 @@ def main():
         epochs_per_round=args.epochs_per_round,
         lr=args.lr,
         batch_size=args.batch_size,
+        mu=mu,
         model_kwargs=model_kwargs,
     )
 
     # ── Run simulation ──
-    logger.info("Starting Flower simulation  |  mode=%s  rounds=%d  clients=%d",
-                args.mode, args.num_rounds, num_clients)
+    logger.info("Starting Flower simulation  |  mode=%s  rounds=%d  clients=%d  tag=%s",
+                args.mode, args.num_rounds, num_clients, tag)
 
+    start_time = time.time()
     history = fl.simulation.start_simulation(
         client_fn=client_fn,
         num_clients=num_clients,
@@ -239,9 +268,11 @@ def main():
         logger.info("Loaded aggregated weights from last round.")
 
     # ── Post-training: evaluate on global test set ──
+    test_loss, test_acc = None, None
+    preds, labels = [], []
     test_path = data_dir / "test.npz"
     if test_path.exists():
-        logger.info("Evaluating final model on global test set …")
+        logger.info("Evaluating final model on global test set \u2026")
         test_data = np.load(test_path)
         x_test = torch.from_numpy(test_data["x"].astype(np.float32))
         y_test = torch.from_numpy(test_data["y"].astype(np.int64))
@@ -249,32 +280,100 @@ def main():
                                  batch_size=args.batch_size)
 
         ref_model.to(device)
-        test_loss, test_acc = evaluate_global(ref_model, test_loader, device)
-        logger.info("Global test — loss: %.4f  acc: %.4f", test_loss, test_acc)
+        test_loss, test_acc, preds, labels = evaluate_global(
+            ref_model, test_loader, device)
+        logger.info("Global test \u2014 loss: %.4f  acc: %.4f", test_loss, test_acc)
+
+    total_time = time.time() - start_time
 
     # ── Save model checkpoint ──
-    ckpt_path = out_dir / "global_model.pt"
+    ckpt_path = out_dir / f"{tag}_global.pt"
     torch.save(ref_model.state_dict(), ckpt_path)
     logger.info("Model saved → %s", ckpt_path)
 
-    # ── Save strategy round history ──
-    hist_path = out_dir / "fl_history.json"
+    # ── Per-class metrics and confusion matrix ──
+    num_cls = args.num_classes
+    label_names = MEDICAL_LABELS[:num_cls]
+    per_class_acc = {}
+    confusion = np.zeros((num_cls, num_cls), dtype=int)
+    if preds and labels:
+        class_correct = Counter()
+        class_total = Counter()
+        for p, l in zip(preds, labels):
+            class_total[l] += 1
+            confusion[l][p] += 1
+            if p == l:
+                class_correct[l] += 1
+        for c in sorted(class_total.keys()):
+            per_class_acc[int(c)] = {
+                'name': label_names[c] if c < len(label_names) else f'class_{c}',
+                'accuracy': round(class_correct[c] / max(class_total[c], 1), 4),
+                'correct': class_correct[c],
+                'total': class_total[c],
+            }
+
+        # Save confusion matrix CSV
+        cm_path = out_dir / f"{tag}_confusion_matrix.csv"
+        with open(cm_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([''] + label_names)
+            for i, row in enumerate(confusion):
+                writer.writerow([label_names[i]] + row.tolist())
+        logger.info("Confusion matrix saved → %s", cm_path)
+
+    # ── Save strategy round history with full metadata ──
+    hist_path = out_dir / f"{tag}_results.json"
+    results_obj = {
+        'tag': tag,
+        'mode': args.mode,
+        'graph': args.graph,
+        'num_classes': args.num_classes,
+        'num_clients': num_clients,
+        'num_rounds': args.num_rounds,
+        'epochs_per_round': args.epochs_per_round,
+        'batch_size': args.batch_size,
+        'lr': args.lr,
+        'mu': mu,
+        'base_channels': args.base_channels,
+        'num_stages': args.num_stages,
+        'num_person': args.num_person,
+        'params': count_parameters(ref_model),
+        'final_test_acc': round(test_acc, 4) if test_acc is not None else None,
+        'final_test_loss': round(test_loss, 4) if test_loss is not None else None,
+        'total_time_s': round(total_time, 1),
+        'label_names': label_names,
+        'per_class_acc': per_class_acc,
+        'confusion_matrix': confusion.tolist() if preds else None,
+        'round_history': strategy.history,
+    }
     with open(hist_path, "w") as f:
-        json.dump(strategy.history, f, indent=2)
-    logger.info("History saved → %s", hist_path)
+        json.dump(results_obj, f, indent=2)
+    logger.info("Results saved → %s", hist_path)
 
     # ── Print summary ──
     print("\n" + "═" * 60)
-    print("  Federated Training Complete")
+    print(f"  Federated Training Complete — {tag}")
     print("═" * 60)
+    print(f"  Mode:       {args.mode}")
+    print(f"  Rounds:     {args.num_rounds}")
+    print(f"  Clients:    {num_clients}")
+    print(f"  Time:       {total_time / 60:.1f} min")
     if strategy.history:
         last = strategy.history[-1]
         print(f"  Final round {last['round']}:")
         print(f"    Global acc      : {last.get('global_acc', 'N/A'):.4f}")
         print(f"    Mean client acc : {last.get('mean_client_acc', 'N/A'):.4f}")
         print(f"    Worst client acc: {last.get('worst_client_acc', 'N/A'):.4f}")
+    if test_acc is not None:
+        print(f"  Global test acc:  {test_acc:.4f}")
     print(f"  Checkpoint: {ckpt_path}")
-    print(f"  History   : {hist_path}")
+    print(f"  Results:    {hist_path}")
+    if per_class_acc:
+        print(f"\n  Per-class accuracy:")
+        for c in sorted(per_class_acc.keys()):
+            info = per_class_acc[c]
+            print(f"    [{c:2d}] {info['name']:20s} {info['accuracy']:.4f}  "
+                  f"({info['correct']}/{info['total']})")
     print("═" * 60)
 
 

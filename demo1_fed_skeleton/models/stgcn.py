@@ -78,6 +78,35 @@ def get_coco_adjacency() -> np.ndarray:
     return _build_adjacency(COCO_NUM_JOINTS, COCO_INWARD, COCO_CENTER)
 
 
+# ═══════════════════════════ NTU-25 graph ════════════════════════════════════
+
+NTU_INWARD = [
+    (0, 1), (1, 20), (20, 2), (2, 3),           # spine
+    (20, 4), (4, 5), (5, 6), (6, 7),             # left arm
+    (7, 21), (7, 22),                             # left hand
+    (20, 8), (8, 9), (9, 10), (10, 11),           # right arm
+    (11, 23), (11, 24),                           # right hand
+    (0, 12), (12, 13), (13, 14), (14, 15),        # left leg
+    (0, 16), (16, 17), (17, 18), (18, 19),        # right leg
+]
+NTU_NUM_JOINTS = 25
+NTU_CENTER = 1  # spine base
+
+
+def get_ntu_adjacency() -> np.ndarray:
+    return _build_adjacency(NTU_NUM_JOINTS, NTU_INWARD, NTU_CENTER)
+
+
+def get_adjacency(graph: str = 'coco') -> tuple:
+    """Return (adjacency_matrix, num_joints) for the given graph type."""
+    if graph == 'coco':
+        return get_coco_adjacency(), COCO_NUM_JOINTS
+    elif graph in ('ntu', 'ntu25', 'nturgb+d'):
+        return get_ntu_adjacency(), NTU_NUM_JOINTS
+    else:
+        raise ValueError(f"Unknown graph type: {graph}")
+
+
 # ═══════════════════════════ building blocks ═════════════════════════════════
 
 class MsTCN(nn.Module):
@@ -260,6 +289,7 @@ class STGCN(nn.Module):
         num_person: int = 2,
         adaptive: bool = True,
         dropout: float = 0.0,
+        graph: str = 'coco',
     ):
         super().__init__()
         if inflate_stages is None:
@@ -270,10 +300,12 @@ class STGCN(nn.Module):
         self.num_person = num_person
         self.num_classes = num_classes
 
-        A = torch.tensor(get_coco_adjacency(), dtype=torch.float32)
+        adj_matrix, num_joints = get_adjacency(graph)
+        self.num_joints = num_joints
+        A = torch.tensor(adj_matrix, dtype=torch.float32)
 
         # Data batch-norm over (C*V)
-        self.data_bn = nn.BatchNorm1d(in_channels * COCO_NUM_JOINTS)
+        self.data_bn = nn.BatchNorm1d(in_channels * num_joints)
 
         # Build GCN blocks
         channels = [base_channels]
@@ -339,9 +371,9 @@ class STGCN(nn.Module):
 
 # ═══════════════════════════ helpers ═════════════════════════════════════════
 
-def build_model(num_classes: int = 10, in_channels: int = 3, **kwargs) -> STGCN:
+def build_model(num_classes: int = 10, in_channels: int = 3, graph: str = 'coco', **kwargs) -> STGCN:
     """Convenience constructor matching the FL demo defaults."""
-    return STGCN(num_classes=num_classes, in_channels=in_channels, **kwargs)
+    return STGCN(num_classes=num_classes, in_channels=in_channels, graph=graph, **kwargs)
 
 
 def count_parameters(model: nn.Module) -> int:

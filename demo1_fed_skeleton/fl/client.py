@@ -67,6 +67,7 @@ class SkeletonClient(fl.client.NumPyClient):
         lr: float = 0.01,
         device: str = "cpu",
         local_bn: bool = False,
+        mu: float = 0.0,
         model_kwargs: dict | None = None,
     ):
         super().__init__()
@@ -76,6 +77,7 @@ class SkeletonClient(fl.client.NumPyClient):
         self.epochs_per_round = epochs_per_round
         self.batch_size = batch_size
         self.lr = lr
+        self.mu = mu
 
         # Build model
         kw = model_kwargs or {}
@@ -122,6 +124,11 @@ class SkeletonClient(fl.client.NumPyClient):
         optimizer = torch.optim.SGD(self.model.parameters(), lr=self.lr,
                                     momentum=0.9, weight_decay=1e-4)
 
+        # FedProx: snapshot global parameters for proximal term
+        global_params = None
+        if self.mu > 0:
+            global_params = [p.clone().detach() for p in self.model.parameters()]
+
         total_loss, correct, total = 0.0, 0, 0
         for _ in range(self.epochs_per_round):
             for xb, yb in self.loader:
@@ -129,6 +136,15 @@ class SkeletonClient(fl.client.NumPyClient):
                 optimizer.zero_grad()
                 logits = self.model(xb)
                 loss = self.criterion(logits, yb)
+
+                # FedProx proximal term: mu/2 * ||w - w_global||^2
+                if self.mu > 0 and global_params is not None:
+                    prox = sum(
+                        torch.sum((p - gp) ** 2)
+                        for p, gp in zip(self.model.parameters(), global_params)
+                    )
+                    loss = loss + (self.mu / 2) * prox
+
                 loss.backward()
                 optimizer.step()
 
