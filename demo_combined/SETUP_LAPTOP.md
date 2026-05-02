@@ -64,6 +64,14 @@ demo1_fed_skeleton\data\fed_medical_3d\centralized\test.npz  (~70 MB)
 
 These are local training/data artifacts and may not be present after a fresh clone. Fastest path: copy them from the lab PC into the same relative paths on the laptop.
 
+If the lab PC provides `demo_combined\dashboard_artifacts_for_laptop.zip`, copy that zip to the laptop repo root and extract it there:
+
+```powershell
+Expand-Archive -Path demo_combined\dashboard_artifacts_for_laptop.zip -DestinationPath . -Force
+```
+
+The archive preserves the required repository-relative paths, so no manual file placement is needed after extraction.
+
 Verify them with:
 
 ```powershell
