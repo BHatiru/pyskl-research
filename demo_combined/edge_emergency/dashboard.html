@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smart-Care · Edge Emergency Detection</title>
+<style>
+  :root{
+    --bg:#070b16; --panel:#0e1626; --panel2:#131f33; --line:#1e2c44;
+    --txt:#e8eef8; --muted:#8298b8; --accent:#36d0ff; --accent2:#7c5cff;
+    --normal:#3ad29f; --low:#9fd24a; --medium:#f5c542; --high:#ff8a3d; --critical:#ff3b5c;
+    --shadow:0 8px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 700px at 80% -10%, #16243f 0%, var(--bg) 60%);
+    color:var(--txt); font-family:"Segoe UI",Inter,system-ui,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  .app{display:grid; grid-template-rows:auto 1fr; height:100vh}
+
+  /* Header */
+  header{
+    display:flex; align-items:center; gap:18px; padding:14px 26px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(20,32,55,.85), rgba(7,11,22,.4));
+    backdrop-filter:blur(6px);
+  }
+  .logo{
+    width:42px;height:42px;border-radius:11px;
+    background:conic-gradient(from 220deg,var(--accent),var(--accent2),var(--accent));
+    display:grid;place-items:center;font-size:22px;box-shadow:var(--shadow);
+  }
+  .title h1{margin:0;font-size:19px;letter-spacing:.3px}
+  .title p{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+  .spacer{flex:1}
+  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .dot{width:10px;height:10px;border-radius:50%;background:#46506a;
+       box-shadow:0 0 0 0 rgba(58,210,159,.6)}
+  .dot.live{background:var(--normal);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(58,210,159,.5)}70%{box-shadow:0 0 0 10px rgba(58,210,159,0)}100%{box-shadow:0 0 0 0 rgba(58,210,159,0)}}
+  .clock{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted)}
+
+  /* Body layout */
+  .main{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;padding:18px 26px;min-height:0}
+  .video-wrap{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);
+    background:#000;box-shadow:var(--shadow);display:grid;place-items:center}
+  .video-wrap img{width:100%;height:100%;object-fit:contain;display:block}
+  .vid-badge{position:absolute;top:14px;left:14px;display:flex;gap:8px;align-items:center;
+    background:rgba(7,11,22,.6);padding:6px 11px;border-radius:999px;font-size:12px;color:var(--muted);
+    border:1px solid var(--line)}
+  .vid-badge .rec{width:9px;height:9px;border-radius:50%;background:var(--critical);animation:pulse 1.4s infinite}
+  .fps-badge{position:absolute;top:14px;right:14px;background:rgba(7,11,22,.6);
+    padding:6px 11px;border-radius:999px;font-size:12px;border:1px solid var(--line);
+    font-variant-numeric:tabular-nums;color:var(--accent)}
+
+  .side{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;padding-right:4px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 12px;font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+  /* Current action */
+  .action-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .action-name{font-size:30px;font-weight:700;letter-spacing:.3px}
+  .action-conf{font-size:26px;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .sev-chip{display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:7px 14px;border-radius:999px;
+    font-weight:700;font-size:13px;letter-spacing:.6px}
+  .meter{height:9px;border-radius:999px;background:#0a1322;margin-top:14px;overflow:hidden;border:1px solid var(--line)}
+  .meter>span{display:block;height:100%;width:0;border-radius:999px;transition:width .35s ease}
+
+  /* Top-5 */
+  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
+  .bar .lbl{width:118px;font-size:12.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .track{flex:1;height:14px;background:#0a1322;border-radius:7px;overflow:hidden;border:1px solid var(--line)}
+  .bar .fill{height:100%;width:0;border-radius:7px;transition:width .35s ease}
+  .bar .pct{width:46px;text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* Alert banner */
+  .alert{display:none;align-items:center;gap:14px;border-radius:16px;padding:16px 20px;
+    border:1px solid transparent;box-shadow:var(--shadow)}
+  .alert.show{display:flex;animation:flash 1.05s infinite}
+  .alert .ico{font-size:30px}
+  .alert .a-txt{flex:1}
+  .alert .a-txt .a-title{font-size:19px;font-weight:800;letter-spacing:.4px}
+  .alert .a-txt .a-sub{font-size:12.5px;opacity:.85;margin-top:2px}
+  @keyframes flash{0%,100%{filter:brightness(1)}50%{filter:brightness(1.28)}}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .stat{background:#0a1322;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat .k{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
+  .stat .v{font-size:22px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+
+  /* Event log */
+  .log{max-height:200px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+  .ev{display:flex;align-items:center;gap:10px;font-size:13px;padding:8px 11px;border-radius:10px;
+    background:#0a1322;border:1px solid var(--line)}
+  .ev .t{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11.5px}
+  .ev .pill{padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px}
+  .empty{color:var(--muted);font-size:13px;font-style:italic}
+
+  .badges{display:flex;flex-wrap:wrap;gap:9px}
+  .badge{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);
+    background:#0a1322;border:1px solid var(--line);padding:7px 12px;border-radius:999px}
+  .badge b{color:var(--txt);font-weight:600}
+  footer{padding:0 26px 16px;color:#54627d;font-size:11.5px;display:flex;gap:16px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">🛡️</div>
+    <div class="title">
+      <h1>Smart‑Care · Edge Emergency Detection</h1>
+      <p>Privacy‑preserving skeleton action recognition · running on Raspberry&nbsp;Pi&nbsp;5 (CPU)</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="status"><span id="dot" class="dot"></span><span id="connTxt">connecting…</span></div>
+    <div class="clock" id="clock">--:--:--</div>
+  </header>
+
+  <div class="main">
+    <!-- Live video -->
+    <div class="video-wrap">
+      <img id="stream" alt="live stream" />
+      <div class="vid-badge"><span class="rec"></span> LIVE · skeleton overlay</div>
+      <div class="fps-badge" id="fpsBadge">– FPS</div>
+    </div>
+
+    <!-- Side panels -->
+    <div class="side">
+      <!-- Alert banner -->
+      <div class="alert" id="alert">
+        <div class="ico" id="alertIco">⚠️</div>
+        <div class="a-txt">
+          <div class="a-title" id="alertTitle">EMERGENCY</div>
+          <div class="a-sub" id="alertSub"></div>
+        </div>
+        <div style="font-variant-numeric:tabular-nums;font-size:22px;font-weight:800" id="alertAge"></div>
+      </div>
+
+      <!-- Current action -->
+      <div class="card">
+        <h3>Current Action</h3>
+        <div class="action-row">
+          <div class="action-name" id="actName">—</div>
+          <div class="action-conf" id="actConf">—</div>
+        </div>
+        <div><span class="sev-chip" id="sevChip">NORMAL</span></div>
+        <div class="meter"><span id="confMeter"></span></div>
+      </div>
+
+      <!-- Top-5 -->
+      <div class="card">
+        <h3>Confidence — Top 5</h3>
+        <div id="top5"></div>
+      </div>
+
+      <!-- Telemetry -->
+      <div class="card">
+        <h3>Edge Telemetry</h3>
+        <div class="grid2">
+          <div class="stat"><div class="k">Throughput</div><div class="v" id="stFps">– <span style="font-size:12px;color:var(--muted)">fps</span></div></div>
+          <div class="stat"><div class="k">Latency</div><div class="v" id="stLat">– <span style="font-size:12px;color:var(--muted)">ms</span></div></div>
+          <div class="stat"><div class="k">Persons</div><div class="v" id="stPpl">0</div></div>
+          <div class="stat"><div class="k">Uptime</div><div class="v" id="stUp">0s</div></div>
+        </div>
+      </div>
+
+      <!-- Event log -->
+      <div class="card">
+        <h3>Emergency Log</h3>
+        <div class="log" id="log"><div class="empty">No emergencies detected.</div></div>
+      </div>
+
+      <!-- Narrative badges -->
+      <div class="card">
+        <h3>System</h3>
+        <div class="badges">
+          <span class="badge">🔒 <b>Skeleton‑only</b> · no raw video stored</span>
+          <span class="badge">🌐 <b>Federated‑trained</b> across sites</span>
+          <span class="badge">🧠 STGCN++ · <b>15 medical actions</b></span>
+          <span class="badge">⚡ <b>On‑device</b> inference (no cloud)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer>
+    <span>Model: STGCN++ (centralized 2D) · falling 97% recall / 100% precision on held‑out test</span>
+    <span>·</span>
+    <span>SEDS2024025 — Smart‑Care: Multi‑Sensor Technology for Elderly &amp; Disabled Health Management</span>
+  </footer>
+</div>
+
+<script>
+const SEV = {
+  CRITICAL:{c:"#ff3b5c", ico:"🚨"}, HIGH:{c:"#ff8a3d", ico:"⚠️"},
+  MEDIUM:{c:"#f5c542", ico:"●"}, LOW:{c:"#9fd24a", ico:"•"}, NORMAL:{c:"#3ad29f", ico:"✓"}
+};
+const $ = id => document.getElementById(id);
+
+// --- video stream (MJPEG) ---
+$("stream").src = "/stream.mjpg";
+
+// --- clock ---
+setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
+
+// --- audio alert (WebAudio, no asset needed) ---
+let actx = null;
+function beep(severity){
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const reps = severity === "CRITICAL" ? 3 : 2;
+    for(let i=0;i<reps;i++){
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = "sine";
+      o.frequency.value = severity === "CRITICAL" ? 880 : 660;
+      const t0 = actx.currentTime + i*0.28;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.35, t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.22);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t0); o.stop(t0+0.24);
+    }
+  }catch(e){}
+}
+
+function fmtUptime(s){
+  s = Math.floor(s); const m = Math.floor(s/60); const h = Math.floor(m/60);
+  if(h) return `${h}h ${m%60}m`; if(m) return `${m}m ${s%60}s`; return `${s}s`;
+}
+
+let lastAlertKey = null;
+const logEl = $("log");
+let logHasItems = false;
+
+function pushLog(sev, label){
+  if(!logHasItems){ logEl.innerHTML=""; logHasItems=true; }
+  const row = document.createElement("div");
+  row.className = "ev";
+  const t = new Date().toLocaleTimeString();
+  row.innerHTML = `<span class="pill" style="background:${SEV[sev].c}22;color:${SEV[sev].c}">${sev}</span>
+                   <span style="flex:1">${label}</span><span class="t">${t}</span>`;
+  logEl.prepend(row);
+  while(logEl.children.length > 30) logEl.removeChild(logEl.lastChild);
+}
+
+function render(d){
+  if(!d || !d.action) return;
+  const sev = d.severity || "NORMAL";
+  const sevc = (SEV[sev]||SEV.NORMAL).c;
+
+  $("actName").textContent = d.action;
+  $("actConf").textContent = Math.round((d.confidence||0)*100) + "%";
+  const chip = $("sevChip");
+  chip.textContent = sev;
+  chip.style.background = sevc+"22"; chip.style.color = sevc;
+  const m = $("confMeter");
+  m.style.width = Math.round((d.confidence||0)*100) + "%";
+  m.style.background = sevc;
+
+  // top5
+  const t5 = $("top5"); t5.innerHTML = "";
+  (d.top5||[]).forEach(it => {
+    const c = (SEV[it.severity]||SEV.NORMAL).c;
+    const row = document.createElement("div"); row.className="bar";
+    row.innerHTML = `<div class="lbl">${it.label}</div>
+      <div class="track"><div class="fill" style="width:${(it.prob*100).toFixed(0)}%;background:${c}"></div></div>
+      <div class="pct">${(it.prob*100).toFixed(0)}%</div>`;
+    t5.appendChild(row);
+  });
+
+  // telemetry
+  $("fpsBadge").textContent = (d.fps??"–") + " FPS";
+  $("stFps").innerHTML = (d.fps??"–") + ' <span style="font-size:12px;color:var(--muted)">fps</span>';
+  $("stLat").innerHTML = (d.latency_ms??"–") + ' <span style="font-size:12px;color:var(--muted)">ms</span>';
+  $("stPpl").textContent = d.persons??0;
+  $("stUp").textContent = fmtUptime(d.uptime_s||0);
+
+  // alert
+  const a = d.alert || {active:false};
+  const banner = $("alert");
+  if(a.active){
+    const ac = (SEV[a.severity]||SEV.CRITICAL).c;
+    banner.classList.add("show");
+    banner.style.background = ac+"22";
+    banner.style.borderColor = ac;
+    $("alertIco").textContent = (SEV[a.severity]||SEV.CRITICAL).ico;
+    $("alertTitle").textContent = `${a.severity} EMERGENCY — ${a.label.toUpperCase()}`;
+    $("alertTitle").style.color = ac;
+    $("alertSub").textContent = `Detected ${a.age_s}s ago · alert #${a.count} this session`;
+    $("alertAge").textContent = `${a.age_s}s`;
+    $("alertAge").style.color = ac;
+    const key = a.label + "#" + a.count;
+    if(key !== lastAlertKey){ lastAlertKey = key; beep(a.severity); pushLog(a.severity, a.label); }
+  } else {
+    banner.classList.remove("show");
+  }
+}
+
+// --- SSE connection ---
+function connect(){
+  const es = new EventSource("/events");
+  es.onopen = () => { $("dot").classList.add("live"); $("connTxt").textContent = "edge node connected"; };
+  es.onmessage = (e) => { try{ render(JSON.parse(e.data)); }catch(err){} };
+  es.onerror = () => {
+    $("dot").classList.remove("live"); $("connTxt").textContent = "reconnecting…";
+    es.close(); setTimeout(connect, 1500);
+  };
+}
+connect();
+</script>
+</body>
+</html>
