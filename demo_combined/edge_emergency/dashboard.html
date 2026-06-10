@@ -3,209 +3,214 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Smart-Care · Edge Emergency Detection</title>
+<title>Smart-Care — Edge Emergency Detection</title>
 <style>
   :root{
-    --bg:#070b16; --panel:#0e1626; --panel2:#131f33; --line:#1e2c44;
-    --txt:#e8eef8; --muted:#8298b8; --accent:#36d0ff; --accent2:#7c5cff;
-    --normal:#3ad29f; --low:#9fd24a; --medium:#f5c542; --high:#ff8a3d; --critical:#ff3b5c;
-    --shadow:0 8px 30px rgba(0,0,0,.45);
+    --bg:#0a0e13; --panel:#0f151d; --inset:#0b1119; --line:#1b2632; --line2:#243240;
+    --txt:#e7edf3; --muted:#7d8c9e; --faint:#56657a;
+    --accent:#2dd4bf;
+    --normal:#34d399; --low:#a3e635; --medium:#fbbf24; --high:#fb923c; --critical:#f43f5e;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,"Roboto Mono",monospace;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{
-    background:radial-gradient(1200px 700px at 80% -10%, #16243f 0%, var(--bg) 60%);
-    color:var(--txt); font-family:"Segoe UI",Inter,system-ui,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased; overflow:hidden;
+    background:var(--bg); color:var(--txt);
+    font-family:Inter,"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow:hidden; font-size:14px;
   }
-  .app{display:grid; grid-template-rows:auto 1fr; height:100vh}
+  .app{display:grid; grid-template-rows:auto 1fr auto; height:100vh}
 
-  /* Header */
+  /* ---------- Header ---------- */
   header{
-    display:flex; align-items:center; gap:18px; padding:14px 26px;
-    border-bottom:1px solid var(--line);
-    background:linear-gradient(180deg, rgba(20,32,55,.85), rgba(7,11,22,.4));
-    backdrop-filter:blur(6px);
+    display:flex; align-items:center; gap:14px; padding:13px 24px;
+    border-bottom:1px solid var(--line); background:var(--panel);
   }
-  .logo{
-    width:42px;height:42px;border-radius:11px;
-    background:conic-gradient(from 220deg,var(--accent),var(--accent2),var(--accent));
-    display:grid;place-items:center;font-size:22px;box-shadow:var(--shadow);
-  }
-  .title h1{margin:0;font-size:19px;letter-spacing:.3px}
-  .title p{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+  .mark{width:34px;height:34px;border-radius:8px;border:1px solid var(--line2);
+    background:var(--inset); display:grid; place-items:center; color:var(--accent)}
+  .title h1{margin:0; font-size:16px; font-weight:650; letter-spacing:.2px}
+  .title p{margin:1px 0 0; font-size:12px; color:var(--muted); letter-spacing:.2px}
   .spacer{flex:1}
-  .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-  .dot{width:10px;height:10px;border-radius:50%;background:#46506a;
-       box-shadow:0 0 0 0 rgba(58,210,159,.6)}
-  .dot.live{background:var(--normal);animation:pulse 2s infinite}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(58,210,159,.5)}70%{box-shadow:0 0 0 10px rgba(58,210,159,0)}100%{box-shadow:0 0 0 0 rgba(58,210,159,0)}}
-  .clock{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted)}
+  .org{font-size:11.5px; color:var(--faint); text-align:right; line-height:1.5;
+    border-right:1px solid var(--line); padding-right:16px; margin-right:2px}
+  .org b{color:var(--muted); font-weight:600}
+  .conn{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  .dot.live{background:var(--normal); box-shadow:0 0 0 3px rgba(52,211,153,.15)}
+  .clock{font-family:var(--mono); font-size:12.5px; color:var(--muted); min-width:74px; text-align:right}
 
-  /* Body layout */
-  .main{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;padding:18px 26px;min-height:0}
-  .video-wrap{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);
-    background:#000;box-shadow:var(--shadow);display:grid;place-items:center}
+  /* ---------- Body ---------- */
+  .main{display:grid; grid-template-columns:1.62fr 1fr; gap:16px; padding:16px 24px; min-height:0}
+  .video-wrap{position:relative; border-radius:12px; overflow:hidden; border:1px solid var(--line);
+    background:#000; display:grid; place-items:center}
   .video-wrap img{width:100%;height:100%;object-fit:contain;display:block}
-  .vid-badge{position:absolute;top:14px;left:14px;display:flex;gap:8px;align-items:center;
-    background:rgba(7,11,22,.6);padding:6px 11px;border-radius:999px;font-size:12px;color:var(--muted);
-    border:1px solid var(--line)}
-  .vid-badge .rec{width:9px;height:9px;border-radius:50%;background:var(--critical);animation:pulse 1.4s infinite}
-  .fps-badge{position:absolute;top:14px;right:14px;background:rgba(7,11,22,.6);
-    padding:6px 11px;border-radius:999px;font-size:12px;border:1px solid var(--line);
-    font-variant-numeric:tabular-nums;color:var(--accent)}
+  .tag{position:absolute; display:flex; gap:7px; align-items:center; font-size:11.5px;
+    background:rgba(10,14,19,.72); backdrop-filter:blur(4px); padding:5px 10px; border-radius:7px;
+    border:1px solid var(--line2); letter-spacing:.3px}
+  .tag.tl{top:12px;left:12px;color:var(--muted)}
+  .tag.tr{top:12px;right:12px;color:var(--txt); font-family:var(--mono)}
+  .tag .rec{width:7px;height:7px;border-radius:50%;background:var(--critical)}
+  .tag .rec.on{animation:blink 1.4s infinite}
+  @keyframes blink{50%{opacity:.25}}
 
-  .side{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;padding-right:4px}
-  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
-    border-radius:16px;padding:16px 18px;box-shadow:var(--shadow)}
-  .card h3{margin:0 0 12px;font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow:auto;padding-right:3px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px 17px}
+  .card>h3{margin:0 0 13px; font-size:11px; letter-spacing:1.5px; text-transform:uppercase;
+    color:var(--faint); font-weight:600}
 
   /* Current action */
-  .action-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-  .action-name{font-size:30px;font-weight:700;letter-spacing:.3px}
-  .action-conf{font-size:26px;font-variant-numeric:tabular-nums;color:var(--accent)}
-  .sev-chip{display:inline-flex;align-items:center;gap:8px;margin-top:12px;padding:7px 14px;border-radius:999px;
-    font-weight:700;font-size:13px;letter-spacing:.6px}
-  .meter{height:9px;border-radius:999px;background:#0a1322;margin-top:14px;overflow:hidden;border:1px solid var(--line)}
-  .meter>span{display:block;height:100%;width:0;border-radius:999px;transition:width .35s ease}
+  .act-top{display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
+  .act-name{font-size:27px; font-weight:680; letter-spacing:.2px; line-height:1.1; text-transform:capitalize}
+  .act-conf{font-family:var(--mono); font-size:21px; color:var(--muted); padding-top:4px}
+  .state{display:inline-flex; align-items:center; gap:8px; margin-top:13px; padding:5px 12px 5px 10px;
+    border-radius:6px; font-weight:650; font-size:12px; letter-spacing:.7px; border:1px solid transparent}
+  .state .sd{width:8px;height:8px;border-radius:50%}
+  .meter{height:6px; border-radius:3px; background:var(--inset); margin-top:14px; overflow:hidden}
+  .meter>span{display:block; height:100%; width:0; transition:width .3s ease, background .3s}
 
   /* Top-5 */
-  .bar{display:flex;align-items:center;gap:10px;margin:9px 0}
-  .bar .lbl{width:118px;font-size:12.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .bar .track{flex:1;height:14px;background:#0a1322;border-radius:7px;overflow:hidden;border:1px solid var(--line)}
-  .bar .fill{height:100%;width:0;border-radius:7px;transition:width .35s ease}
-  .bar .pct{width:46px;text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar{display:flex;align-items:center;gap:11px;margin:10px 0}
+  .bar .lbl{width:108px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize}
+  .bar .track{flex:1;height:8px;background:var(--inset);border-radius:4px;overflow:hidden}
+  .bar .fill{height:100%;width:0;border-radius:4px;transition:width .3s ease}
+  .bar .pct{width:38px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)}
 
   /* Alert banner */
-  .alert{display:none;align-items:center;gap:14px;border-radius:16px;padding:16px 20px;
-    border:1px solid transparent;box-shadow:var(--shadow)}
-  .alert.show{display:flex;animation:flash 1.05s infinite}
-  .alert .ico{font-size:30px}
+  .alert{display:none;align-items:center;gap:14px;border-radius:12px;padding:15px 18px;border:1px solid}
+  .alert.show{display:flex}
+  .alert.show.pulse{animation:edge 1.1s infinite}
+  @keyframes edge{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 4px var(--glow)}}
+  .alert .ico{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;flex:none;
+    font-family:var(--mono);font-weight:800;font-size:18px}
   .alert .a-txt{flex:1}
-  .alert .a-txt .a-title{font-size:19px;font-weight:800;letter-spacing:.4px}
-  .alert .a-txt .a-sub{font-size:12.5px;opacity:.85;margin-top:2px}
-  @keyframes flash{0%,100%{filter:brightness(1)}50%{filter:brightness(1.28)}}
+  .alert .a-title{font-size:16px;font-weight:750;letter-spacing:.3px}
+  .alert .a-sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .alert .a-age{font-family:var(--mono);font-size:20px;font-weight:700}
 
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .stat{background:#0a1322;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
-  .stat .k{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
-  .stat .v{font-size:22px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+  /* Telemetry */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{background:var(--inset);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  .stat .k{font-size:10.5px;color:var(--faint);letter-spacing:.7px;text-transform:uppercase}
+  .stat .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:5px}
+  .stat .v u{font-style:normal;text-decoration:none;font-size:11px;color:var(--faint);margin-left:3px}
 
   /* Event log */
-  .log{max-height:200px;overflow:auto;display:flex;flex-direction:column;gap:8px}
-  .ev{display:flex;align-items:center;gap:10px;font-size:13px;padding:8px 11px;border-radius:10px;
-    background:#0a1322;border:1px solid var(--line)}
-  .ev .t{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11.5px}
-  .ev .pill{padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px}
-  .empty{color:var(--muted);font-size:13px;font-style:italic}
+  .log{max-height:172px;overflow:auto;display:flex;flex-direction:column;gap:7px}
+  .ev{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:7px 11px;border-radius:8px;
+    background:var(--inset);border:1px solid var(--line)}
+  .ev .pill{padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:700;letter-spacing:.4px}
+  .ev .lab{flex:1;text-transform:capitalize}
+  .ev .t{color:var(--faint);font-family:var(--mono);font-size:11px}
+  .empty{color:var(--faint);font-size:12.5px}
 
-  .badges{display:flex;flex-wrap:wrap;gap:9px}
-  .badge{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);
-    background:#0a1322;border:1px solid var(--line);padding:7px 12px;border-radius:999px}
-  .badge b{color:var(--txt);font-weight:600}
-  footer{padding:0 26px 16px;color:#54627d;font-size:11.5px;display:flex;gap:16px;flex-wrap:wrap}
+  /* Assurance chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-size:11.5px;color:var(--muted);background:var(--inset);border:1px solid var(--line);
+    padding:6px 11px;border-radius:6px}
+  .chip b{color:var(--txt);font-weight:600}
+
+  footer{display:flex;gap:18px;flex-wrap:wrap;padding:11px 24px;border-top:1px solid var(--line);
+    color:var(--faint);font-size:11.5px;background:var(--panel)}
+  footer .mono{font-family:var(--mono)}
+  ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <div class="logo">🛡️</div>
+    <div class="mark">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z"/>
+        <path d="M5.5 12h3l1.5-3 2 5 1.5-2h5" stroke-width="1.6"/>
+      </svg>
+    </div>
     <div class="title">
-      <h1>Smart‑Care · Edge Emergency Detection</h1>
-      <p>Privacy‑preserving skeleton action recognition · running on Raspberry&nbsp;Pi&nbsp;5 (CPU)</p>
+      <h1>Smart-Care — Edge Emergency Detection</h1>
+      <p>Skeleton action recognition · on-device · Raspberry Pi 5 (CPU)</p>
     </div>
     <div class="spacer"></div>
-    <div class="status"><span id="dot" class="dot"></span><span id="connTxt">connecting…</span></div>
+    <div class="org"><b>Nazarbayev University</b><br>Grant SEDS2024025</div>
+    <div class="conn"><span id="dot" class="dot"></span><span id="connTxt">connecting…</span></div>
     <div class="clock" id="clock">--:--:--</div>
   </header>
 
   <div class="main">
-    <!-- Live video -->
     <div class="video-wrap">
       <img id="stream" alt="live stream" />
-      <div class="vid-badge"><span class="rec"></span> LIVE · skeleton overlay</div>
-      <div class="fps-badge" id="fpsBadge">– FPS</div>
+      <div class="tag tl"><span id="recDot" class="rec"></span> <span id="liveTxt">CONNECTING</span></div>
+      <div class="tag tr" id="fpsBadge">— fps</div>
     </div>
 
-    <!-- Side panels -->
     <div class="side">
-      <!-- Alert banner -->
       <div class="alert" id="alert">
-        <div class="ico" id="alertIco">⚠️</div>
+        <div class="ico" id="alertIco">!</div>
         <div class="a-txt">
           <div class="a-title" id="alertTitle">EMERGENCY</div>
           <div class="a-sub" id="alertSub"></div>
         </div>
-        <div style="font-variant-numeric:tabular-nums;font-size:22px;font-weight:800" id="alertAge"></div>
+        <div class="a-age" id="alertAge"></div>
       </div>
 
-      <!-- Current action -->
       <div class="card">
         <h3>Current Action</h3>
-        <div class="action-row">
-          <div class="action-name" id="actName">—</div>
-          <div class="action-conf" id="actConf">—</div>
+        <div class="act-top">
+          <div class="act-name" id="actName">—</div>
+          <div class="act-conf" id="actConf">—</div>
         </div>
-        <div><span class="sev-chip" id="sevChip">NORMAL</span></div>
+        <span class="state" id="sevChip"><span class="sd"></span><span id="sevTxt">NORMAL</span></span>
         <div class="meter"><span id="confMeter"></span></div>
       </div>
 
-      <!-- Top-5 -->
       <div class="card">
         <h3>Confidence — Top 5</h3>
         <div id="top5"></div>
       </div>
 
-      <!-- Telemetry -->
       <div class="card">
         <h3>Edge Telemetry</h3>
         <div class="grid2">
-          <div class="stat"><div class="k">Throughput</div><div class="v" id="stFps">– <span style="font-size:12px;color:var(--muted)">fps</span></div></div>
-          <div class="stat"><div class="k">Latency</div><div class="v" id="stLat">– <span style="font-size:12px;color:var(--muted)">ms</span></div></div>
-          <div class="stat"><div class="k">Persons</div><div class="v" id="stPpl">0</div></div>
+          <div class="stat"><div class="k">Throughput</div><div class="v" id="stFps">—<u>fps</u></div></div>
+          <div class="stat"><div class="k">Latency</div><div class="v" id="stLat">—<u>ms</u></div></div>
+          <div class="stat"><div class="k">In frame</div><div class="v" id="stPpl">0</div></div>
           <div class="stat"><div class="k">Uptime</div><div class="v" id="stUp">0s</div></div>
         </div>
       </div>
 
-      <!-- Event log -->
       <div class="card">
         <h3>Emergency Log</h3>
         <div class="log" id="log"><div class="empty">No emergencies detected.</div></div>
       </div>
 
-      <!-- Narrative badges -->
       <div class="card">
-        <h3>System</h3>
-        <div class="badges">
-          <span class="badge">🔒 <b>Skeleton‑only</b> · no raw video stored</span>
-          <span class="badge">🌐 <b>Federated‑trained</b> across sites</span>
-          <span class="badge">🧠 STGCN++ · <b>15 medical actions</b></span>
-          <span class="badge">⚡ <b>On‑device</b> inference (no cloud)</span>
+        <h3>Assurance</h3>
+        <div class="chips">
+          <span class="chip"><b>Skeleton-only</b> — no raw video stored</span>
+          <span class="chip"><b>On-device</b> — no cloud</span>
+          <span class="chip"><b>Federated-trained</b> across sites</span>
+          <span class="chip">STGCN++ · <b>15 medical actions</b></span>
         </div>
       </div>
     </div>
   </div>
+
   <footer>
-    <span>Model: STGCN++ (centralized 2D) · falling 97% recall / 100% precision on held‑out test</span>
-    <span>·</span>
-    <span>SEDS2024025 — Smart‑Care: Multi‑Sensor Technology for Elderly &amp; Disabled Health Management</span>
+    <span class="mono">STGCN++ (centralized 2D)</span>
+    <span>falling 97% recall · 100% precision (held-out test)</span>
+    <span class="spacer" style="flex:1"></span>
+    <span>Smart-Care: Multi-Sensor Technology for Elderly &amp; Disabled Health Management</span>
   </footer>
 </div>
 
 <script>
 const SEV = {
-  CRITICAL:{c:"#ff3b5c", ico:"🚨"}, HIGH:{c:"#ff8a3d", ico:"⚠️"},
-  MEDIUM:{c:"#f5c542", ico:"●"}, LOW:{c:"#9fd24a", ico:"•"}, NORMAL:{c:"#3ad29f", ico:"✓"}
+  CRITICAL:{c:"#f43f5e", g:"rgba(244,63,94,.35)"}, HIGH:{c:"#fb923c", g:"rgba(251,146,60,.32)"},
+  MEDIUM:{c:"#fbbf24", g:"rgba(251,191,36,.3)"}, LOW:{c:"#a3e635", g:"rgba(163,230,53,.3)"},
+  NORMAL:{c:"#34d399", g:"rgba(52,211,153,.3)"}
 };
 const $ = id => document.getElementById(id);
-
-// --- video stream (MJPEG) ---
 $("stream").src = "/stream.mjpg";
+setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], {hour12:false}); }, 1000);
 
-// --- clock ---
-setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString(); }, 1000);
-
-// --- audio alert (WebAudio, no asset needed) ---
 let actx = null;
 function beep(severity){
   try{
@@ -213,100 +218,79 @@ function beep(severity){
     const reps = severity === "CRITICAL" ? 3 : 2;
     for(let i=0;i<reps;i++){
       const o = actx.createOscillator(), g = actx.createGain();
-      o.type = "sine";
-      o.frequency.value = severity === "CRITICAL" ? 880 : 660;
+      o.type = "sine"; o.frequency.value = severity === "CRITICAL" ? 880 : 660;
       const t0 = actx.currentTime + i*0.28;
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.35, t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.32, t0+0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t0+0.22);
-      o.connect(g); g.connect(actx.destination);
-      o.start(t0); o.stop(t0+0.24);
+      o.connect(g); g.connect(actx.destination); o.start(t0); o.stop(t0+0.24);
     }
   }catch(e){}
 }
+function fmtUptime(s){ s=Math.floor(s); const m=Math.floor(s/60), h=Math.floor(m/60);
+  if(h) return `${h}h ${m%60}m`; if(m) return `${m}m ${s%60}s`; return `${s}s`; }
 
-function fmtUptime(s){
-  s = Math.floor(s); const m = Math.floor(s/60); const h = Math.floor(m/60);
-  if(h) return `${h}h ${m%60}m`; if(m) return `${m}m ${s%60}s`; return `${s}s`;
-}
-
-let lastAlertKey = null;
-const logEl = $("log");
-let logHasItems = false;
-
-function pushLog(sev, label){
+let lastAlertKey=null, logHasItems=false; const logEl=$("log");
+function pushLog(sev,label){
   if(!logHasItems){ logEl.innerHTML=""; logHasItems=true; }
-  const row = document.createElement("div");
-  row.className = "ev";
-  const t = new Date().toLocaleTimeString();
-  row.innerHTML = `<span class="pill" style="background:${SEV[sev].c}22;color:${SEV[sev].c}">${sev}</span>
-                   <span style="flex:1">${label}</span><span class="t">${t}</span>`;
-  logEl.prepend(row);
-  while(logEl.children.length > 30) logEl.removeChild(logEl.lastChild);
+  const row=document.createElement("div"); row.className="ev";
+  const t=new Date().toLocaleTimeString([], {hour12:false});
+  row.innerHTML=`<span class="pill" style="background:${SEV[sev].c}1f;color:${SEV[sev].c}">${sev}</span>
+                 <span class="lab">${label}</span><span class="t">${t}</span>`;
+  logEl.prepend(row); while(logEl.children.length>40) logEl.removeChild(logEl.lastChild);
 }
 
 function render(d){
   if(!d || !d.action) return;
-  const sev = d.severity || "NORMAL";
-  const sevc = (SEV[sev]||SEV.NORMAL).c;
-
+  const sev = d.severity || "NORMAL"; const sc = (SEV[sev]||SEV.NORMAL).c;
   $("actName").textContent = d.action;
   $("actConf").textContent = Math.round((d.confidence||0)*100) + "%";
-  const chip = $("sevChip");
-  chip.textContent = sev;
-  chip.style.background = sevc+"22"; chip.style.color = sevc;
-  const m = $("confMeter");
-  m.style.width = Math.round((d.confidence||0)*100) + "%";
-  m.style.background = sevc;
+  const chip=$("sevChip"); $("sevTxt").textContent = sev;
+  chip.style.background = sc+"14"; chip.style.borderColor = sc+"55"; chip.style.color = sc;
+  chip.querySelector(".sd").style.background = sc;
+  const m=$("confMeter"); m.style.width=Math.round((d.confidence||0)*100)+"%"; m.style.background=sc;
 
-  // top5
-  const t5 = $("top5"); t5.innerHTML = "";
-  (d.top5||[]).forEach(it => {
-    const c = (SEV[it.severity]||SEV.NORMAL).c;
-    const row = document.createElement("div"); row.className="bar";
-    row.innerHTML = `<div class="lbl">${it.label}</div>
+  const t5=$("top5"); t5.innerHTML="";
+  (d.top5||[]).forEach(it=>{
+    const c=(SEV[it.severity]||SEV.NORMAL).c;
+    const row=document.createElement("div"); row.className="bar";
+    row.innerHTML=`<div class="lbl">${it.label}</div>
       <div class="track"><div class="fill" style="width:${(it.prob*100).toFixed(0)}%;background:${c}"></div></div>
       <div class="pct">${(it.prob*100).toFixed(0)}%</div>`;
     t5.appendChild(row);
   });
 
-  // telemetry
-  $("fpsBadge").textContent = (d.fps??"–") + " FPS";
-  $("stFps").innerHTML = (d.fps??"–") + ' <span style="font-size:12px;color:var(--muted)">fps</span>';
-  $("stLat").innerHTML = (d.latency_ms??"–") + ' <span style="font-size:12px;color:var(--muted)">ms</span>';
+  $("fpsBadge").textContent = (d.fps??"—") + " fps";
+  $("stFps").innerHTML = (d.fps??"—") + '<u>fps</u>';
+  $("stLat").innerHTML = (d.latency_ms??"—") + '<u>ms</u>';
   $("stPpl").textContent = d.persons??0;
   $("stUp").textContent = fmtUptime(d.uptime_s||0);
 
-  // alert
-  const a = d.alert || {active:false};
-  const banner = $("alert");
+  const a = d.alert || {active:false}; const banner=$("alert");
   if(a.active){
-    const ac = (SEV[a.severity]||SEV.CRITICAL).c;
-    banner.classList.add("show");
-    banner.style.background = ac+"22";
-    banner.style.borderColor = ac;
-    $("alertIco").textContent = (SEV[a.severity]||SEV.CRITICAL).ico;
-    $("alertTitle").textContent = `${a.severity} EMERGENCY — ${a.label.toUpperCase()}`;
-    $("alertTitle").style.color = ac;
-    $("alertSub").textContent = `Detected ${a.age_s}s ago · alert #${a.count} this session`;
-    $("alertAge").textContent = `${a.age_s}s`;
-    $("alertAge").style.color = ac;
-    const key = a.label + "#" + a.count;
-    if(key !== lastAlertKey){ lastAlertKey = key; beep(a.severity); pushLog(a.severity, a.label); }
-  } else {
-    banner.classList.remove("show");
-  }
+    const ac=(SEV[a.severity]||SEV.CRITICAL).c;
+    banner.classList.add("show"); if(a.severity==="CRITICAL") banner.classList.add("pulse"); else banner.classList.remove("pulse");
+    banner.style.background=ac+"12"; banner.style.borderColor=ac+"66"; banner.style.setProperty("--glow",(SEV[a.severity]||SEV.CRITICAL).g);
+    const ico=$("alertIco"); ico.style.background=ac+"22"; ico.style.color=ac;
+    $("alertTitle").textContent=`${a.severity} — ${a.label.toUpperCase()}`; $("alertTitle").style.color=ac;
+    $("alertSub").textContent=`detected ${a.age_s}s ago · alert #${a.count} this session`;
+    $("alertAge").textContent=`${a.age_s}s`; $("alertAge").style.color=ac;
+    const key=a.label+"#"+a.count;
+    if(key!==lastAlertKey){ lastAlertKey=key; beep(a.severity); pushLog(a.severity,a.label); }
+  } else { banner.classList.remove("show","pulse"); }
 }
 
-// --- SSE connection ---
+function setLive(on){
+  $("dot").classList.toggle("live",on);
+  $("connTxt").textContent = on ? "edge node connected" : "reconnecting…";
+  $("recDot").classList.toggle("on",on);
+  $("liveTxt").textContent = on ? "LIVE" : "OFFLINE";
+}
 function connect(){
-  const es = new EventSource("/events");
-  es.onopen = () => { $("dot").classList.add("live"); $("connTxt").textContent = "edge node connected"; };
-  es.onmessage = (e) => { try{ render(JSON.parse(e.data)); }catch(err){} };
-  es.onerror = () => {
-    $("dot").classList.remove("live"); $("connTxt").textContent = "reconnecting…";
-    es.close(); setTimeout(connect, 1500);
-  };
+  const es=new EventSource("/events");
+  es.onopen=()=>setLive(true);
+  es.onmessage=(e)=>{ try{ render(JSON.parse(e.data)); }catch(err){} };
+  es.onerror=()=>{ setLive(false); es.close(); setTimeout(connect,1500); };
 }
 connect();
 </script>

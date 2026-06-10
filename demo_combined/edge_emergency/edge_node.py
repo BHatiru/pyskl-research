@@ -253,23 +253,16 @@ SEV_BGR = {
 
 
 def annotate(frame, keypoints, scores, bboxes, label, conf, severity, alert, fps):
-    """Draw skeleton + action label + severity banner onto the frame."""
+    """Draw a CLEAN skeleton overlay (+ a bottom emergency banner only).
+
+    The action label, confidence, FPS etc. are shown by the dashboard panels, so
+    we deliberately do NOT burn them onto the video — that keeps the feed clean
+    and avoids the duplicated/overlapping text the old HUD produced.
+    """
     if len(keypoints) > 0:
         demo_onnx.draw_skeleton(frame, keypoints, scores, kpt_thr=0.3)
-    for bb in bboxes:
-        x1, y1, x2, y2 = [int(v) for v in bb]
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 1)
 
     h, w = frame.shape[:2]
-    # Top action bar
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 46), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
-    col = SEV_BGR.get(severity, (200, 200, 200))
-    txt = f"{label} ({conf:.0%})" if label else "...detecting..."
-    cv2.putText(frame, txt, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, col, 2, cv2.LINE_AA)
-    cv2.putText(frame, f"{fps:.1f} FPS", (w - 120, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1, cv2.LINE_AA)
 
     # Emergency banner (bottom) when an alert is latched
     if alert and alert.get("active"):
