@@ -2,134 +2,157 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Smart-Care — Edge Emergency Detection</title>
+<meta name="theme-color" content="#0a0e14" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icon-180.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Smart-Care" />
 <style>
   :root{
-    --bg:#0a0e13; --panel:#0f151d; --inset:#0b1119; --line:#1b2632; --line2:#243240;
-    --txt:#e7edf3; --muted:#7d8c9e; --faint:#56657a;
+    --bg:#0a0e14; --panel:#111824; --inset:#0c121b; --line:#1d2836; --line2:#26344a;
+    --txt:#eaf0f6; --muted:#8a9aad; --faint:#5a6b7e;
     --accent:#2dd4bf;
     --normal:#34d399; --low:#a3e635; --medium:#fbbf24; --high:#fb923c; --critical:#f43f5e;
     --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,"Roboto Mono",monospace;
+    --r:16px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{
-    background:var(--bg); color:var(--txt);
+    background:linear-gradient(180deg,#0b1018,#0a0e14 40%); color:var(--txt);
     font-family:Inter,"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
     -webkit-font-smoothing:antialiased; overflow:hidden; font-size:14px;
   }
-  .app{display:grid; grid-template-rows:auto 1fr auto; height:100vh}
+  .app{display:grid; grid-template-rows:auto 1fr auto; height:100vh; height:100dvh}
 
-  /* ---------- Header ---------- */
-  header{
-    display:flex; align-items:center; gap:14px; padding:13px 24px;
-    border-bottom:1px solid var(--line); background:var(--panel);
-  }
-  .mark{width:34px;height:34px;border-radius:8px;border:1px solid var(--line2);
-    background:var(--inset); display:grid; place-items:center; color:var(--accent)}
-  .title h1{margin:0; font-size:16px; font-weight:650; letter-spacing:.2px}
-  .title p{margin:1px 0 0; font-size:12px; color:var(--muted); letter-spacing:.2px}
+  /* Header */
+  header{display:flex; align-items:center; gap:14px; padding:14px 26px; border-bottom:1px solid var(--line)}
+  .mark{width:36px;height:36px;border-radius:10px;background:#0d9488;display:grid;place-items:center;flex:none;
+    box-shadow:0 6px 18px rgba(13,148,136,.28)}
+  .title h1{margin:0;font-size:16.5px;font-weight:650;letter-spacing:.2px}
+  .title p{margin:2px 0 0;font-size:12px;color:var(--muted)}
   .spacer{flex:1}
-  .org{font-size:11.5px; color:var(--faint); text-align:right; line-height:1.5;
-    border-right:1px solid var(--line); padding-right:16px; margin-right:2px}
-  .org b{color:var(--muted); font-weight:600}
-  .conn{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted)}
+  .btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line2);background:var(--panel);
+    color:var(--txt);font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:10px;cursor:pointer;
+    transition:.15s}
+  .btn:hover{border-color:var(--accent)}
+  .btn.armed{border-color:var(--accent);color:var(--accent);background:rgba(45,212,191,.08)}
+  .btn .bd{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+  .btn.armed .bd{background:var(--accent);box-shadow:0 0 0 3px rgba(45,212,191,.18)}
+  .conn{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);min-width:130px;justify-content:flex-end}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
-  .dot.live{background:var(--normal); box-shadow:0 0 0 3px rgba(52,211,153,.15)}
-  .clock{font-family:var(--mono); font-size:12.5px; color:var(--muted); min-width:74px; text-align:right}
+  .dot.live{background:var(--normal);box-shadow:0 0 0 3px rgba(52,211,153,.16)}
+  .clock{font-family:var(--mono);font-size:12.5px;color:var(--muted);min-width:70px;text-align:right}
 
-  /* ---------- Body ---------- */
-  .main{display:grid; grid-template-columns:1.62fr 1fr; gap:16px; padding:16px 24px; min-height:0}
-  .video-wrap{position:relative; border-radius:12px; overflow:hidden; border:1px solid var(--line);
-    background:#000; display:grid; place-items:center}
+  /* Body */
+  .main{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;padding:18px 26px;min-height:0}
+  .video-wrap{position:relative;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
+    background:#000;display:grid;place-items:center}
   .video-wrap img{width:100%;height:100%;object-fit:contain;display:block}
-  .tag{position:absolute; display:flex; gap:7px; align-items:center; font-size:11.5px;
-    background:rgba(10,14,19,.72); backdrop-filter:blur(4px); padding:5px 10px; border-radius:7px;
-    border:1px solid var(--line2); letter-spacing:.3px}
-  .tag.tl{top:12px;left:12px;color:var(--muted)}
-  .tag.tr{top:12px;right:12px;color:var(--txt); font-family:var(--mono)}
+  .tag{position:absolute;display:flex;gap:7px;align-items:center;font-size:11.5px;
+    background:rgba(10,14,20,.7);backdrop-filter:blur(5px);padding:6px 11px;border-radius:8px;border:1px solid var(--line2)}
+  .tag.tl{top:14px;left:14px;color:var(--muted);letter-spacing:.4px}
+  .tag.tr{top:14px;right:14px;color:var(--txt);font-family:var(--mono)}
   .tag .rec{width:7px;height:7px;border-radius:50%;background:var(--critical)}
   .tag .rec.on{animation:blink 1.4s infinite}
   @keyframes blink{50%{opacity:.25}}
 
-  .side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow:auto;padding-right:3px}
-  .card{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:15px 17px}
-  .card>h3{margin:0 0 13px; font-size:11px; letter-spacing:1.5px; text-transform:uppercase;
-    color:var(--faint); font-weight:600}
+  .side{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;padding-right:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px}
+  .card>h3{margin:0 0 14px;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--faint);font-weight:600}
 
-  /* Current action */
-  .act-top{display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
-  .act-name{font-size:27px; font-weight:680; letter-spacing:.2px; line-height:1.1; text-transform:capitalize}
-  .act-conf{font-family:var(--mono); font-size:21px; color:var(--muted); padding-top:4px}
-  .state{display:inline-flex; align-items:center; gap:8px; margin-top:13px; padding:5px 12px 5px 10px;
-    border-radius:6px; font-weight:650; font-size:12px; letter-spacing:.7px; border:1px solid transparent}
+  /* Status hero */
+  .hero{display:flex;align-items:center;gap:18px}
+  .ring{--p:0;--rc:var(--normal);width:84px;height:84px;border-radius:50%;flex:none;
+    background:radial-gradient(closest-side,var(--panel) 79%,transparent 80%),
+      conic-gradient(var(--rc) calc(var(--p)*1%),#18222f 0);
+    display:grid;place-items:center;transition:--p .5s ease}
+  .ring .rv{font-family:var(--mono);font-size:18px;font-weight:600}
+  .hero-main{flex:1;min-width:0}
+  .hero-name{font-size:26px;font-weight:680;letter-spacing:.2px;text-transform:capitalize;line-height:1.15;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .state{display:inline-flex;align-items:center;gap:8px;margin-top:9px;padding:5px 13px 5px 10px;border-radius:8px;
+    font-weight:650;font-size:12px;letter-spacing:.7px;border:1px solid transparent}
   .state .sd{width:8px;height:8px;border-radius:50%}
-  .meter{height:6px; border-radius:3px; background:var(--inset); margin-top:14px; overflow:hidden}
-  .meter>span{display:block; height:100%; width:0; transition:width .3s ease, background .3s}
+
+  /* Vitals (Apple Watch) */
+  .vitals{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .vital{background:var(--inset);border:1px solid var(--line);border-radius:12px;padding:13px 15px;position:relative}
+  .vital .k{font-size:10.5px;color:var(--faint);letter-spacing:.6px;text-transform:uppercase}
+  .vital .v{font-family:var(--mono);font-size:24px;font-weight:600;margin-top:5px}
+  .vital .v u{font-style:normal;text-decoration:none;font-size:11px;color:var(--faint);margin-left:3px}
+  .pending{position:absolute;top:12px;right:12px;font-size:9.5px;letter-spacing:.5px;color:var(--faint);
+    border:1px solid var(--line2);border-radius:5px;padding:2px 6px}
 
   /* Top-5 */
-  .bar{display:flex;align-items:center;gap:11px;margin:10px 0}
-  .bar .lbl{width:108px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize}
-  .bar .track{flex:1;height:8px;background:var(--inset);border-radius:4px;overflow:hidden}
+  .bar{display:flex;align-items:center;gap:11px;margin:9px 0}
+  .bar .lbl{width:104px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:capitalize}
+  .bar .track{flex:1;height:7px;background:var(--inset);border-radius:4px;overflow:hidden}
   .bar .fill{height:100%;width:0;border-radius:4px;transition:width .3s ease}
-  .bar .pct{width:38px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)}
-
-  /* Alert banner */
-  .alert{display:none;align-items:center;gap:14px;border-radius:12px;padding:15px 18px;border:1px solid}
-  .alert.show{display:flex}
-  .alert.show.pulse{animation:edge 1.1s infinite}
-  @keyframes edge{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 4px var(--glow)}}
-  .alert .ico{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;flex:none;
-    font-family:var(--mono);font-weight:800;font-size:18px}
-  .alert .a-txt{flex:1}
-  .alert .a-title{font-size:16px;font-weight:750;letter-spacing:.3px}
-  .alert .a-sub{font-size:12px;color:var(--muted);margin-top:2px}
-  .alert .a-age{font-family:var(--mono);font-size:20px;font-weight:700}
+  .bar .pct{width:36px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--muted)}
 
   /* Telemetry */
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .stat{background:var(--inset);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
-  .stat .k{font-size:10.5px;color:var(--faint);letter-spacing:.7px;text-transform:uppercase}
-  .stat .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  .stat{background:var(--inset);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+  .stat .k{font-size:10.5px;color:var(--faint);letter-spacing:.6px;text-transform:uppercase}
+  .stat .v{font-family:var(--mono);font-size:20px;font-weight:600;margin-top:5px}
   .stat .v u{font-style:normal;text-decoration:none;font-size:11px;color:var(--faint);margin-left:3px}
 
-  /* Event log */
-  .log{max-height:172px;overflow:auto;display:flex;flex-direction:column;gap:7px}
-  .ev{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:7px 11px;border-radius:8px;
-    background:var(--inset);border:1px solid var(--line)}
-  .ev .pill{padding:2px 8px;border-radius:5px;font-size:10.5px;font-weight:700;letter-spacing:.4px}
+  /* Log */
+  .log{max-height:150px;overflow:auto;display:flex;flex-direction:column;gap:7px}
+  .ev{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:7px 11px;border-radius:9px;background:var(--inset);border:1px solid var(--line)}
+  .ev .pill{padding:2px 8px;border-radius:6px;font-size:10.5px;font-weight:700;letter-spacing:.4px}
   .ev .lab{flex:1;text-transform:capitalize}
   .ev .t{color:var(--faint);font-family:var(--mono);font-size:11px}
   .empty{color:var(--faint);font-size:12.5px}
 
-  /* Assurance chips */
   .chips{display:flex;flex-wrap:wrap;gap:8px}
-  .chip{font-size:11.5px;color:var(--muted);background:var(--inset);border:1px solid var(--line);
-    padding:6px 11px;border-radius:6px}
+  .chip{font-size:11.5px;color:var(--muted);background:var(--inset);border:1px solid var(--line);padding:6px 11px;border-radius:7px}
   .chip b{color:var(--txt);font-weight:600}
 
-  footer{display:flex;gap:18px;flex-wrap:wrap;padding:11px 24px;border-top:1px solid var(--line);
-    color:var(--faint);font-size:11.5px;background:var(--panel)}
+  footer{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:12px 26px;border-top:1px solid var(--line);color:var(--faint);font-size:11.5px}
   footer .mono{font-family:var(--mono)}
   ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
+
+  /* Full-screen emergency takeover */
+  .fs{position:fixed;inset:0;z-index:50;display:none;place-items:center;
+    background:radial-gradient(circle at 50% 38%, var(--g1), var(--g2) 70%);
+    -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+  .fs.show{display:grid;animation:fsin .25s ease}
+  .fs.crit{animation:fsin .25s ease, fspulse 1.05s infinite .25s}
+  @keyframes fsin{from{opacity:0}to{opacity:1}}
+  @keyframes fspulse{0%,100%{background-color:transparent}50%{background-color:rgba(0,0,0,.18)}}
+  .fs-inner{text-align:center;max-width:560px;padding:30px}
+  .fs-ico{width:118px;height:118px;border-radius:50%;margin:0 auto 22px;display:grid;place-items:center;
+    font-family:var(--mono);font-weight:800;font-size:64px;color:#fff;border:3px solid rgba(255,255,255,.5)}
+  .fs-kind{font-size:46px;font-weight:800;letter-spacing:.5px;color:#fff;line-height:1.05}
+  .fs-sub{font-size:16px;color:rgba(255,255,255,.82);margin-top:12px;letter-spacing:.3px}
+  .fs-ack{margin-top:30px;border:1px solid rgba(255,255,255,.55);background:rgba(255,255,255,.12);color:#fff;
+    font-size:14px;font-weight:650;letter-spacing:.5px;padding:12px 28px;border-radius:12px;cursor:pointer}
+  .fs-ack:hover{background:rgba(255,255,255,.22)}
+
+  @media(max-width:880px){
+    .main{grid-template-columns:1fr;grid-auto-rows:min-content}
+    .video-wrap{aspect-ratio:16/10}
+    body{overflow:auto}
+  }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
     <div class="mark">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 21s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 5.65-7 10-7 10Z"/>
-        <path d="M5.5 12h3l1.5-3 2 5 1.5-2h5" stroke-width="1.6"/>
-      </svg>
+      <svg width="20" height="20" viewBox="0 0 512 512"><polyline points="64,272 176,272 204,264 230,144 270,388 300,238 322,280 452,280" fill="none" stroke="#fff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
     <div class="title">
       <h1>Smart-Care — Edge Emergency Detection</h1>
-      <p>Skeleton action recognition · on-device · Raspberry Pi 5 (CPU)</p>
+      <p>On-device skeleton monitoring · Raspberry Pi 5</p>
     </div>
     <div class="spacer"></div>
-    <div class="org"><b>Nazarbayev University</b><br>Grant SEDS2024025</div>
+    <button class="btn" id="armBtn" title="Enable sound + phone notifications"><span class="bd"></span><span id="armTxt">Enable alerts</span></button>
     <div class="conn"><span id="dot" class="dot"></span><span id="connTxt">connecting…</span></div>
     <div class="clock" id="clock">--:--:--</div>
   </header>
@@ -142,27 +165,27 @@
     </div>
 
     <div class="side">
-      <div class="alert" id="alert">
-        <div class="ico" id="alertIco">!</div>
-        <div class="a-txt">
-          <div class="a-title" id="alertTitle">EMERGENCY</div>
-          <div class="a-sub" id="alertSub"></div>
+      <div class="card">
+        <h3>Patient Status</h3>
+        <div class="hero">
+          <div class="ring" id="ring"><span class="rv" id="ringV">—</span></div>
+          <div class="hero-main">
+            <div class="hero-name" id="actName">—</div>
+            <span class="state" id="sevChip"><span class="sd"></span><span id="sevTxt">NORMAL</span></span>
+          </div>
         </div>
-        <div class="a-age" id="alertAge"></div>
       </div>
 
       <div class="card">
-        <h3>Current Action</h3>
-        <div class="act-top">
-          <div class="act-name" id="actName">—</div>
-          <div class="act-conf" id="actConf">—</div>
+        <h3>Vitals · Apple Watch</h3>
+        <div class="vitals">
+          <div class="vital"><span class="pending">PAIRING</span><div class="k">Heart rate</div><div class="v" id="vHr">—<u>bpm</u></div></div>
+          <div class="vital"><span class="pending">PAIRING</span><div class="k">Blood O₂</div><div class="v" id="vSpo2">—<u>%</u></div></div>
         </div>
-        <span class="state" id="sevChip"><span class="sd"></span><span id="sevTxt">NORMAL</span></span>
-        <div class="meter"><span id="confMeter"></span></div>
       </div>
 
       <div class="card">
-        <h3>Confidence — Top 5</h3>
+        <h3>Action Confidence — Top 5</h3>
         <div id="top5"></div>
       </div>
 
@@ -186,105 +209,140 @@
         <div class="chips">
           <span class="chip"><b>Skeleton-only</b> — no raw video stored</span>
           <span class="chip"><b>On-device</b> — no cloud</span>
-          <span class="chip"><b>Federated-trained</b> across sites</span>
-          <span class="chip">STGCN++ · <b>15 medical actions</b></span>
+          <span class="chip"><b>Federated-trained</b></span>
         </div>
       </div>
     </div>
   </div>
 
   <footer>
-    <span class="mono">STGCN++ (centralized 2D)</span>
-    <span>falling 97% recall · 100% precision (held-out test)</span>
-    <span class="spacer" style="flex:1"></span>
-    <span>Smart-Care: Multi-Sensor Technology for Elderly &amp; Disabled Health Management</span>
+    <span class="mono">STGCN++ centralized 2D</span>
+    <span>falling 97% recall · 100% precision (held-out)</span>
+    <span class="spacer"></span>
+    <span>Nazarbayev University · Grant SEDS2024025</span>
   </footer>
+</div>
+
+<!-- Full-screen emergency takeover -->
+<div class="fs" id="fs">
+  <div class="fs-inner">
+    <div class="fs-ico" id="fsIco">!</div>
+    <div class="fs-kind" id="fsKind">EMERGENCY</div>
+    <div class="fs-sub" id="fsSub"></div>
+    <button class="fs-ack" id="fsAck">Acknowledge</button>
+  </div>
 </div>
 
 <script>
 const SEV = {
-  CRITICAL:{c:"#f43f5e", g:"rgba(244,63,94,.35)"}, HIGH:{c:"#fb923c", g:"rgba(251,146,60,.32)"},
-  MEDIUM:{c:"#fbbf24", g:"rgba(251,191,36,.3)"}, LOW:{c:"#a3e635", g:"rgba(163,230,53,.3)"},
-  NORMAL:{c:"#34d399", g:"rgba(52,211,153,.3)"}
+  CRITICAL:{c:"#f43f5e", g1:"rgba(244,63,94,.45)", g2:"rgba(120,10,30,.92)", kind:"FALL DETECTED"},
+  HIGH:    {c:"#fb923c", g1:"rgba(251,146,60,.4)", g2:"rgba(120,60,10,.92)", kind:"HIGH ALERT"},
+  MEDIUM:  {c:"#fbbf24", g1:"rgba(251,191,36,.32)",g2:"rgba(110,80,10,.9)",  kind:"ATTENTION"},
+  LOW:     {c:"#a3e635", g1:"rgba(163,230,53,.3)", g2:"rgba(70,90,10,.9)",   kind:"NOTICE"},
+  NORMAL:  {c:"#34d399", g1:"rgba(52,211,153,.3)", g2:"rgba(10,80,60,.9)",   kind:"NORMAL"}
 };
 const $ = id => document.getElementById(id);
 $("stream").src = "/stream.mjpg";
-setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], {hour12:false}); }, 1000);
+setInterval(()=>{ $("clock").textContent = new Date().toLocaleTimeString([], {hour12:false}); }, 1000);
 
-let actx = null;
-function beep(severity){
+/* ---- alerts: audio + vibration + OS notification (armed by a user tap) ---- */
+let armed=false, actx=null, swReg=null;
+async function armAlerts(){
+  try{ actx = actx || new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") await actx.resume(); }catch(e){}
+  if("Notification" in window && Notification.permission==="default"){ try{ await Notification.requestPermission(); }catch(e){} }
+  if("serviceWorker" in navigator && window.isSecureContext){
+    try{ swReg = await navigator.serviceWorker.register("/sw.js"); }catch(e){}
+  }
+  armed=true; const b=$("armBtn"); b.classList.add("armed"); $("armTxt").textContent="Alerts on";
+  beep("NORMAL");            // audible confirmation
+  if(navigator.vibrate) navigator.vibrate(40);
+}
+$("armBtn").onclick = armAlerts;
+
+function beep(sev){
+  if(!actx) return;
+  const crit = sev==="CRITICAL"; const reps = crit?3:(sev==="HIGH"?2:1);
+  for(let i=0;i<reps;i++){
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type="sine"; o.frequency.value = crit?880:(sev==="HIGH"?720:560);
+    const t0=actx.currentTime+i*0.26;
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(crit?0.4:0.28,t0+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+0.22);
+    o.connect(g); g.connect(actx.destination); o.start(t0); o.stop(t0+0.24);
+  }
+}
+function notify(sev, label){
+  const body = `${sev} — ${label}`;
+  const opts = {body, icon:"/icon-192.png", badge:"/icon-192.png", tag:"smartcare-alert",
+                renotify:true, vibrate:[200,100,200,100,300], requireInteraction:(sev==="CRITICAL")};
   try{
-    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
-    const reps = severity === "CRITICAL" ? 3 : 2;
-    for(let i=0;i<reps;i++){
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type = "sine"; o.frequency.value = severity === "CRITICAL" ? 880 : 660;
-      const t0 = actx.currentTime + i*0.28;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.32, t0+0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.22);
-      o.connect(g); g.connect(actx.destination); o.start(t0); o.stop(t0+0.24);
+    if("Notification" in window && Notification.permission==="granted"){
+      if(swReg && swReg.showNotification) swReg.showNotification("Smart-Care alert", opts);
+      else new Notification("Smart-Care alert", opts);
     }
   }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(sev==="CRITICAL"?[200,100,200,100,400]:[150,100,150]);
 }
-function fmtUptime(s){ s=Math.floor(s); const m=Math.floor(s/60), h=Math.floor(m/60);
+
+function fmtUptime(s){ s=Math.floor(s); const m=Math.floor(s/60),h=Math.floor(m/60);
   if(h) return `${h}h ${m%60}m`; if(m) return `${m}m ${s%60}s`; return `${s}s`; }
 
-let lastAlertKey=null, logHasItems=false; const logEl=$("log");
+let lastAlertKey=null, ackKey=null, logHasItems=false; const logEl=$("log");
 function pushLog(sev,label){
   if(!logHasItems){ logEl.innerHTML=""; logHasItems=true; }
   const row=document.createElement("div"); row.className="ev";
   const t=new Date().toLocaleTimeString([], {hour12:false});
-  row.innerHTML=`<span class="pill" style="background:${SEV[sev].c}1f;color:${SEV[sev].c}">${sev}</span>
-                 <span class="lab">${label}</span><span class="t">${t}</span>`;
+  row.innerHTML=`<span class="pill" style="background:${SEV[sev].c}1f;color:${SEV[sev].c}">${sev}</span><span class="lab">${label}</span><span class="t">${t}</span>`;
   logEl.prepend(row); while(logEl.children.length>40) logEl.removeChild(logEl.lastChild);
 }
 
+function showFs(sev,label,age){
+  const s=SEV[sev]||SEV.CRITICAL; const fs=$("fs");
+  fs.style.setProperty("--g1",s.g1); fs.style.setProperty("--g2",s.g2);
+  $("fsIco").style.borderColor="rgba(255,255,255,.55)";
+  $("fsKind").textContent=s.kind; $("fsSub").textContent=`${sev} · ${label} · detected ${age}s ago`;
+  fs.classList.add("show"); fs.classList.toggle("crit",sev==="CRITICAL");
+}
+function hideFs(){ $("fs").classList.remove("show","crit"); }
+$("fsAck").onclick = ()=>{ ackKey=lastAlertKey; hideFs(); };
+
 function render(d){
   if(!d || !d.action) return;
-  const sev = d.severity || "NORMAL"; const sc = (SEV[sev]||SEV.NORMAL).c;
-  $("actName").textContent = d.action;
-  $("actConf").textContent = Math.round((d.confidence||0)*100) + "%";
-  const chip=$("sevChip"); $("sevTxt").textContent = sev;
-  chip.style.background = sc+"14"; chip.style.borderColor = sc+"55"; chip.style.color = sc;
-  chip.querySelector(".sd").style.background = sc;
-  const m=$("confMeter"); m.style.width=Math.round((d.confidence||0)*100)+"%"; m.style.background=sc;
+  const sev=d.severity||"NORMAL", sc=(SEV[sev]||SEV.NORMAL).c;
+  $("actName").textContent=d.action;
+  const pct=Math.round((d.confidence||0)*100);
+  const ring=$("ring"); ring.style.setProperty("--p",pct); ring.style.setProperty("--rc",sc);
+  $("ringV").textContent=pct+"%";
+  const chip=$("sevChip"); $("sevTxt").textContent=sev;
+  chip.style.background=sc+"14"; chip.style.borderColor=sc+"55"; chip.style.color=sc;
+  chip.querySelector(".sd").style.background=sc;
 
   const t5=$("top5"); t5.innerHTML="";
   (d.top5||[]).forEach(it=>{
     const c=(SEV[it.severity]||SEV.NORMAL).c;
     const row=document.createElement("div"); row.className="bar";
-    row.innerHTML=`<div class="lbl">${it.label}</div>
-      <div class="track"><div class="fill" style="width:${(it.prob*100).toFixed(0)}%;background:${c}"></div></div>
-      <div class="pct">${(it.prob*100).toFixed(0)}%</div>`;
+    row.innerHTML=`<div class="lbl">${it.label}</div><div class="track"><div class="fill" style="width:${(it.prob*100).toFixed(0)}%;background:${c}"></div></div><div class="pct">${(it.prob*100).toFixed(0)}%</div>`;
     t5.appendChild(row);
   });
 
-  $("fpsBadge").textContent = (d.fps??"—") + " fps";
-  $("stFps").innerHTML = (d.fps??"—") + '<u>fps</u>';
-  $("stLat").innerHTML = (d.latency_ms??"—") + '<u>ms</u>';
-  $("stPpl").textContent = d.persons??0;
-  $("stUp").textContent = fmtUptime(d.uptime_s||0);
+  $("fpsBadge").textContent=(d.fps??"—")+" fps";
+  $("stFps").innerHTML=(d.fps??"—")+'<u>fps</u>';
+  $("stLat").innerHTML=(d.latency_ms??"—")+'<u>ms</u>';
+  $("stPpl").textContent=d.persons??0;
+  $("stUp").textContent=fmtUptime(d.uptime_s||0);
 
-  const a = d.alert || {active:false}; const banner=$("alert");
+  const a=d.alert||{active:false};
   if(a.active){
-    const ac=(SEV[a.severity]||SEV.CRITICAL).c;
-    banner.classList.add("show"); if(a.severity==="CRITICAL") banner.classList.add("pulse"); else banner.classList.remove("pulse");
-    banner.style.background=ac+"12"; banner.style.borderColor=ac+"66"; banner.style.setProperty("--glow",(SEV[a.severity]||SEV.CRITICAL).g);
-    const ico=$("alertIco"); ico.style.background=ac+"22"; ico.style.color=ac;
-    $("alertTitle").textContent=`${a.severity} — ${a.label.toUpperCase()}`; $("alertTitle").style.color=ac;
-    $("alertSub").textContent=`detected ${a.age_s}s ago · alert #${a.count} this session`;
-    $("alertAge").textContent=`${a.age_s}s`; $("alertAge").style.color=ac;
     const key=a.label+"#"+a.count;
-    if(key!==lastAlertKey){ lastAlertKey=key; beep(a.severity); pushLog(a.severity,a.label); }
-  } else { banner.classList.remove("show","pulse"); }
+    if(key!==lastAlertKey){ lastAlertKey=key; beep(a.severity); notify(a.severity,a.label); pushLog(a.severity,a.label); }
+    if(key!==ackKey) showFs(a.severity,a.label,a.age_s);
+  } else { lastAlertKey=null; hideFs(); }
 }
 
 function setLive(on){
-  $("dot").classList.toggle("live",on);
-  $("connTxt").textContent = on ? "edge node connected" : "reconnecting…";
-  $("recDot").classList.toggle("on",on);
-  $("liveTxt").textContent = on ? "LIVE" : "OFFLINE";
+  $("dot").classList.toggle("live",on); $("connTxt").textContent=on?"edge node connected":"reconnecting…";
+  $("recDot").classList.toggle("on",on); $("liveTxt").textContent=on?"LIVE":"OFFLINE";
 }
 function connect(){
   const es=new EventSource("/events");

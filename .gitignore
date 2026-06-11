@@ -169,4 +169,4 @@ federated_v2/outputs_temporal/*.json
 *.pth
 
 # Test videos
-test/
+test/demo_combined/edge_emergency/.certs/

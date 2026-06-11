@@ -31,6 +31,8 @@ Then open http://<this-host-ip>:8000/ in a browser.
 import argparse
 import json
 import os
+import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -433,6 +435,80 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E40
 
 _DASHBOARD_PATH = Path(__file__).resolve().parent / "dashboard.html"
 
+# --- PWA assets (served in-memory so a phone can "install" the dashboard) ------
+_THEME = "#0a0e13"
+
+_MANIFEST = json.dumps({
+    "name": "Smart-Care Monitor",
+    "short_name": "Smart-Care",
+    "description": "Live edge emergency detection",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": _THEME,
+    "theme_color": _THEME,
+    "icons": [
+        {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"},
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    ],
+}).encode("utf-8")
+
+# Minimal service worker: enables install + lets the page raise OS notifications.
+_SW_JS = (
+    b"self.addEventListener('install',e=>self.skipWaiting());\n"
+    b"self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));\n"
+    b"self.addEventListener('notificationclick',e=>{e.notification.close();"
+    b"e.waitUntil(clients.matchAll({type:'window'}).then(c=>c.length?c[0].focus():clients.openWindow('/')));});\n"
+)
+
+_ICON_PTS = "64,272 176,272 204,264 230,144 270,388 300,238 322,280 452,280"  # ECG heartbeat
+_ICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">'
+    '<rect width="512" height="512" rx="116" fill="#0d9488"/>'
+    f'<polyline points="{_ICON_PTS}" fill="none" stroke="#ffffff" stroke-width="26" '
+    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+).encode("utf-8")
+
+_ICON_PNG_CACHE = {}
+
+def _icon_png(size):
+    """Render the heartbeat app-icon to PNG via cv2 (cached)."""
+    if size in _ICON_PNG_CACHE:
+        return _ICON_PNG_CACHE[size]
+    s = size / 512.0
+    img = np.empty((size, size, 3), np.uint8)
+    img[:] = (136, 148, 13)  # BGR of #0d9488 teal
+    pts = np.array([[int(x) for x in p.split(",")] for p in _ICON_PTS.split()], np.float32)
+    pts = (pts * s).astype(np.int32)
+    cv2.polylines(img, [pts], False, (255, 255, 255), max(2, int(26 * s)), cv2.LINE_AA)
+    ok, buf = cv2.imencode(".png", img)
+    data = buf.tobytes() if ok else b""
+    _ICON_PNG_CACHE[size] = data
+    return data
+
+
+_CERT_DIR = Path(__file__).resolve().parent / ".certs"
+
+def ensure_self_signed_cert(ip=None):
+    """Return (cert_path, key_path), generating a self-signed cert via openssl if absent."""
+    _CERT_DIR.mkdir(exist_ok=True)
+    cert = _CERT_DIR / "cert.pem"
+    key = _CERT_DIR / "key.pem"
+    if cert.exists() and key.exists():
+        return str(cert), str(key)
+    san = "subjectAltName=DNS:localhost,DNS:smartcare.local,IP:127.0.0.1,IP:10.42.0.1"
+    if ip and ip != "127.0.0.1":
+        san += f",IP:{ip}"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+         "-keyout", str(key), "-out", str(cert), "-days", "825",
+         "-subj", "/CN=Smart-Care Edge", "-addext", san],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return str(cert), str(key)
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -465,9 +541,21 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/healthz":
             self._send_headers(200, "text/plain", length=2)
             self.wfile.write(b"ok")
+        elif path == "/manifest.webmanifest":
+            self._send_bytes(200, "application/manifest+json", _MANIFEST)
+        elif path == "/sw.js":
+            self._send_bytes(200, "application/javascript", _SW_JS)
+        elif path == "/icon.svg":
+            self._send_bytes(200, "image/svg+xml", _ICON_SVG)
+        elif path in ("/icon-192.png", "/icon-512.png", "/icon-180.png"):
+            self._send_bytes(200, "image/png", _icon_png(int(path.split("-")[1].split(".")[0])))
         else:
             self._send_headers(404, "text/plain", length=9)
             self.wfile.write(b"not found")
+
+    def _send_bytes(self, code, ctype, data):
+        self._send_headers(code, ctype, length=len(data))
+        self.wfile.write(data)
 
     def _serve_dashboard(self):
         try:
@@ -622,6 +710,10 @@ def parse_args():
     # Server
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--https", action="store_true",
+                   help="Serve over HTTPS with an auto-generated self-signed cert. "
+                        "Required for phone OS notifications + 'add to home screen' (PWA). "
+                        "Browsers will warn about the cert once — accept it to proceed.")
     p.add_argument("--no-video", action="store_true", help="Disable MJPEG encoding")
     p.add_argument("--jpeg-quality", type=int, default=80)
     # Models
@@ -673,12 +765,24 @@ def main():
     time.sleep(0.5)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
     ip = get_lan_ip()
+    scheme = "http"
+    if args.https:
+        try:
+            cert, key = ensure_self_signed_cert(ip)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert, key)
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            scheme = "https"
+        except Exception as e:
+            print(f"  ! HTTPS setup failed ({e}); serving plain HTTP instead.")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     print("\n" + "=" * 60)
     print("  Smart-Care Edge Emergency Node is LIVE")
-    print(f"  Open the dashboard on the laptop:  http://{ip}:{args.port}/")
-    print(f"  (local: http://127.0.0.1:{args.port}/)")
+    print(f"  Open the dashboard:  {scheme}://{ip}:{args.port}/")
+    print(f"  (local: {scheme}://127.0.0.1:{args.port}/)")
+    if scheme == "https":
+        print("  NOTE: self-signed cert -> the browser warns once; tap Advanced -> Proceed.")
     print("=" * 60 + "\n")
     try:
         while not stop.is_set():
