@@ -512,7 +512,7 @@ _ICON_SVG = (
 ).encode("utf-8")
 
 # Compact, glanceable status page for a phone home-screen "web widget" app.
-WIDGET_HTML = b"""<!DOCTYPE html><html><head><meta charset="utf-8">
+WIDGET_HTML = ("""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Care</title>
 <style>html,body{margin:0;height:100%;background:#0a0e14;color:#eaf0f6;
 font-family:Inter,system-ui,Arial}.w{height:100vh;display:flex;flex-direction:column;
@@ -534,7 +534,7 @@ var v=d.vitals||{};g("hr").textContent=v.heartRate?Math.round(v.heartRate):"—"
 g("o2").textContent=v.spo2?Math.round(v.spo2):"—";
 g("sub").textContent="updated "+new Date().toLocaleTimeString([],{hour12:false});
 }).catch(function(){g("sub").textContent="offline"})}
-tick();setInterval(tick,2000);</script></body></html>"""
+tick();setInterval(tick,2000);</script></body></html>""").encode("utf-8")
 
 _ICON_PNG_CACHE = {}
 
