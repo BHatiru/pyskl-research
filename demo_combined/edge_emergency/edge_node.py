@@ -219,6 +219,19 @@ def _softmax(z):
     return e / e.sum()
 
 
+def resolve_source(args):
+    """Pick the OpenCV capture source: --source URL > --video file > --camera index.
+
+    A string (URL/path) is passed straight to cv2.VideoCapture, so a phone running
+    an IP-webcam app (http://<phone-ip>:8080/video) works as a wireless camera.
+    """
+    if args.source:
+        return args.source
+    if args.video:
+        return args.video
+    return args.camera
+
+
 def build_pipeline(args):
     model_dir = Path(args.model_dir)
     threads = args.threads
@@ -283,7 +296,7 @@ def inference_loop(args, stop_event):
         min_hits=args.alert_hits, hold_s=args.alert_hold,
     )
 
-    source = args.video if args.video else args.camera
+    source = resolve_source(args)
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         print(f"ERROR: cannot open source {source!r}")
@@ -534,7 +547,7 @@ def run_selftest(args, n_frames):
     detector, pose, recog = build_pipeline(args)
     engine = AlertEngine(conf_thr=args.alert_conf, window=args.alert_window,
                          min_hits=args.alert_hits, hold_s=args.alert_hold)
-    source = args.video if args.video else args.camera
+    source = resolve_source(args)
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         print(f"ERROR: cannot open source {source!r}")
@@ -599,6 +612,10 @@ def parse_args():
     # Source
     p.add_argument("--camera", type=int, default=0, help="Webcam index")
     p.add_argument("--video", type=str, default=None, help="Video file instead of webcam")
+    p.add_argument("--source", type=str, default=None,
+                   help="Network video stream URL — use a phone as the camera: run an "
+                        "IP-webcam app and pass e.g. http://<phone-ip>:8080/video (MJPEG) "
+                        "or rtsp://<phone-ip>:.../  . Overrides --camera/--video.")
     p.add_argument("--loop", action="store_true", help="Loop the video file forever")
     p.add_argument("--max-fps", type=float, default=25.0,
                    help="Cap playback FPS when reading a file (0=unlimited)")
