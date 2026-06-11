@@ -343,6 +343,7 @@ def inference_loop(args, stop_event):
     scores_buf = deque(maxlen=args.window_frames)
     present_buf = deque(maxlen=args.window_frames)  # per-frame person-presence gate
     fps_win = deque(maxlen=30)
+    loop_prev = None  # previous iteration start (for true throughput incl. fps cap)
 
     cached_bboxes = []
     results = []
@@ -360,6 +361,9 @@ def inference_loop(args, stop_event):
 
     while not stop_event.is_set():
         t0 = time.perf_counter()
+        if loop_prev is not None:                       # true end-to-end rate
+            fps_win.append(1.0 / max(t0 - loop_prev, 1e-6))
+        loop_prev = t0
         ret, frame = cap.read()
         if not ret:
             if args.video and args.loop:
@@ -408,9 +412,8 @@ def inference_loop(args, stop_event):
                 engine.update("", 0.0, now)  # benign vote: lets a latched alert decay
             new_result = True
 
-        dt = time.perf_counter() - t0
-        fps_win.append(1.0 / max(dt, 1e-6))
-        fps = sum(fps_win) / len(fps_win)
+        dt = time.perf_counter() - t0  # processing latency (excludes fps-cap sleep)
+        fps = (sum(fps_win) / len(fps_win)) if fps_win else (1.0 / max(dt, 1e-6))
         alert_snap = engine.snapshot(now)
 
         # Encode annotated frame for MJPEG (don't draw a skeleton when no one's there)
