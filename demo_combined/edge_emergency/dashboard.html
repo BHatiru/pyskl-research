@@ -117,27 +117,39 @@
   footer .mono{font-family:var(--mono)}
   ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 
-  /* Full-screen emergency takeover */
-  .fs{position:fixed;inset:0;z-index:50;display:none;place-items:center;
-    background:radial-gradient(circle at 50% 38%, var(--g1), var(--g2) 70%);
-    -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
-  .fs.show{display:grid;animation:fsin .25s ease}
-  .fs.crit{animation:fsin .25s ease, fspulse 1.05s infinite .25s}
-  @keyframes fsin{from{opacity:0}to{opacity:1}}
-  @keyframes fspulse{0%,100%{background-color:transparent}50%{background-color:rgba(0,0,0,.18)}}
-  .fs-inner{text-align:center;max-width:560px;padding:30px}
-  .fs-ico{width:118px;height:118px;border-radius:50%;margin:0 auto 22px;display:grid;place-items:center;
-    font-family:var(--mono);font-weight:800;font-size:64px;color:#fff;border:3px solid rgba(255,255,255,.5)}
-  .fs-kind{font-size:46px;font-weight:800;letter-spacing:.5px;color:#fff;line-height:1.05}
-  .fs-sub{font-size:16px;color:rgba(255,255,255,.82);margin-top:12px;letter-spacing:.3px}
-  .fs-ack{margin-top:30px;border:1px solid rgba(255,255,255,.55);background:rgba(255,255,255,.12);color:#fff;
-    font-size:14px;font-weight:650;letter-spacing:.5px;padding:12px 28px;border-radius:12px;cursor:pointer}
-  .fs-ack:hover{background:rgba(255,255,255,.22)}
+  /* Emergency banner — slides down from the top (CRITICAL only), not full-screen */
+  .alertbar{position:fixed;top:14px;left:50%;transform:translate(-50%,-160%);z-index:50;
+    display:flex;align-items:center;gap:13px;max-width:92vw;
+    padding:12px 15px 12px 13px;border-radius:14px;color:#fff;
+    background:linear-gradient(180deg,#f43f5e,#e11d48);border:1px solid rgba(255,255,255,.3);
+    box-shadow:0 16px 44px rgba(244,63,94,.5);
+    transition:transform .35s cubic-bezier(.2,.9,.3,1.15)}
+  .alertbar.show{transform:translate(-50%,0);animation:abpulse 1.15s infinite}
+  @keyframes abpulse{0%,100%{box-shadow:0 16px 44px rgba(244,63,94,.5)}50%{box-shadow:0 16px 60px rgba(244,63,94,.85)}}
+  .alertbar .ab-ico{width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;
+    background:rgba(255,255,255,.18);font-family:var(--mono);font-weight:800;font-size:19px}
+  .alertbar .ab-kind{font-size:14.5px;font-weight:800;letter-spacing:.4px}
+  .alertbar .ab-sub{font-size:11.5px;opacity:.92;margin-top:1px}
+  .alertbar .ab-ack{margin-left:4px;border:1px solid rgba(255,255,255,.5);background:rgba(255,255,255,.14);
+    color:#fff;font-size:12px;font-weight:650;padding:8px 14px;border-radius:9px;cursor:pointer}
+  .alertbar .ab-ack:hover{background:rgba(255,255,255,.26)}
+  .video-wrap.crit{box-shadow:inset 0 0 0 3px var(--critical)}
+  .video-wrap.crit::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 3px var(--critical);
+    animation:vcrit 1.15s infinite;pointer-events:none;border-radius:var(--r)}
+  @keyframes vcrit{50%{box-shadow:inset 0 0 0 3px rgba(244,63,94,.25)}}
 
   @media(max-width:880px){
-    .main{grid-template-columns:1fr;grid-auto-rows:min-content}
-    .video-wrap{aspect-ratio:16/10}
     body{overflow:auto}
+    header{padding:11px 15px;flex-wrap:wrap;gap:10px}
+    .title h1{font-size:14.5px} .title p{display:none} .clock{display:none}
+    .conn{min-width:0}
+    .main{grid-template-columns:1fr;gap:14px;padding:14px 15px}
+    .video-wrap{width:100%;aspect-ratio:16/10}
+    .side{overflow:visible;padding-right:0}
+    .hero-name{font-size:22px}
+    footer{padding:12px 15px}
+    .alertbar{left:8px;right:8px;max-width:none;transform:translateY(-160%)}
+    .alertbar.show{transform:translateY(0)}
   }
 </style>
 </head>
@@ -223,14 +235,11 @@
   </footer>
 </div>
 
-<!-- Full-screen emergency takeover -->
-<div class="fs" id="fs">
-  <div class="fs-inner">
-    <div class="fs-ico" id="fsIco">!</div>
-    <div class="fs-kind" id="fsKind">EMERGENCY</div>
-    <div class="fs-sub" id="fsSub"></div>
-    <button class="fs-ack" id="fsAck">Acknowledge</button>
-  </div>
+<!-- Emergency banner (CRITICAL / fall only) -->
+<div class="alertbar" id="ab">
+  <div class="ab-ico">!</div>
+  <div class="ab-txt"><div class="ab-kind">FALL DETECTED</div><div class="ab-sub" id="abSub"></div></div>
+  <button class="ab-ack" id="abAck">Acknowledge</button>
 </div>
 
 <script>
@@ -297,15 +306,13 @@ function pushLog(sev,label){
   logEl.prepend(row); while(logEl.children.length>40) logEl.removeChild(logEl.lastChild);
 }
 
-function showFs(sev,label,age){
-  const s=SEV[sev]||SEV.CRITICAL; const fs=$("fs");
-  fs.style.setProperty("--g1",s.g1); fs.style.setProperty("--g2",s.g2);
-  $("fsIco").style.borderColor="rgba(255,255,255,.55)";
-  $("fsKind").textContent=s.kind; $("fsSub").textContent=`${sev} · ${label} · detected ${age}s ago`;
-  fs.classList.add("show"); fs.classList.toggle("crit",sev==="CRITICAL");
+const vidWrap=document.querySelector(".video-wrap");
+function showBar(label,age){
+  $("abSub").textContent=`Critical · ${label} · detected ${age}s ago`;
+  $("ab").classList.add("show"); vidWrap.classList.add("crit");
 }
-function hideFs(){ $("fs").classList.remove("show","crit"); }
-$("fsAck").onclick = ()=>{ ackKey=lastAlertKey; hideFs(); };
+function hideBar(){ $("ab").classList.remove("show"); vidWrap.classList.remove("crit"); }
+$("abAck").onclick = ()=>{ ackKey=lastAlertKey; hideBar(); };
 
 function render(d){
   if(!d || !d.action) return;
@@ -332,12 +339,13 @@ function render(d){
   $("stPpl").textContent=d.persons??0;
   $("stUp").textContent=fmtUptime(d.uptime_s||0);
 
+  // Alerts/notifications fire for CRITICAL (falling) only.
   const a=d.alert||{active:false};
-  if(a.active){
+  if(a.active && a.severity==="CRITICAL"){
     const key=a.label+"#"+a.count;
-    if(key!==lastAlertKey){ lastAlertKey=key; beep(a.severity); notify(a.severity,a.label); pushLog(a.severity,a.label); }
-    if(key!==ackKey) showFs(a.severity,a.label,a.age_s);
-  } else { lastAlertKey=null; hideFs(); }
+    if(key!==lastAlertKey){ lastAlertKey=key; beep("CRITICAL"); notify("CRITICAL",a.label); pushLog("CRITICAL",a.label); }
+    if(key!==ackKey) showBar(a.label,a.age_s);
+  } else { lastAlertKey=null; hideBar(); }
 }
 
 function setLive(on){

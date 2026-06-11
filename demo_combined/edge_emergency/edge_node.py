@@ -79,8 +79,10 @@ SEVERITY = {
 # Severity rank for comparisons (higher = more urgent)
 SEV_RANK = {"NORMAL": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
-# Classes that can raise an alert
-EMERGENCY_SEVERITIES = {"HIGH", "CRITICAL"}
+# Severities that can raise a latched alert / phone notification.
+# Demo decision (2026-06-11): only CRITICAL (falling) alerts -- staggering/nausea
+# (HIGH) still show as the live status, but must NOT trigger the alarm/notification.
+EMERGENCY_SEVERITIES = {"CRITICAL"}
 
 
 def severity_of(label):
