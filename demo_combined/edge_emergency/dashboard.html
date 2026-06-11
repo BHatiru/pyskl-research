@@ -86,6 +86,10 @@
   .vital .v u{font-style:normal;text-decoration:none;font-size:11px;color:var(--faint);margin-left:3px}
   .pending{position:absolute;top:12px;right:12px;font-size:9.5px;letter-spacing:.5px;color:var(--faint);
     border:1px solid var(--line2);border-radius:5px;padding:2px 6px}
+  .vbadge{float:right;font-size:9.5px;letter-spacing:.5px;color:var(--faint);border:1px solid var(--line2);
+    border-radius:5px;padding:2px 7px;font-weight:600}
+  .vbadge.live{color:var(--normal);border-color:rgba(52,211,153,.45)}
+  .vstat{font-size:15px!important}
 
   /* Top-5 */
   .bar{display:flex;align-items:center;gap:11px;margin:9px 0}
@@ -189,10 +193,12 @@
       </div>
 
       <div class="card">
-        <h3>Vitals · Apple Watch</h3>
+        <h3>Vitals · Apple Watch <span class="vbadge" id="vBadge">PAIRING</span></h3>
         <div class="vitals">
-          <div class="vital"><span class="pending">PAIRING</span><div class="k">Heart rate</div><div class="v" id="vHr">—<u>bpm</u></div></div>
-          <div class="vital"><span class="pending">PAIRING</span><div class="k">Blood O₂</div><div class="v" id="vSpo2">—<u>%</u></div></div>
+          <div class="vital"><div class="k">Heart rate</div><div class="v" id="vHr">—<u>bpm</u></div></div>
+          <div class="vital"><div class="k">Blood O₂</div><div class="v" id="vSpo2">—<u>%</u></div></div>
+          <div class="vital"><div class="k">Temperature</div><div class="v" id="vTemp">—<u>°C</u></div></div>
+          <div class="vital"><div class="k">Status</div><div class="v vstat" id="vStat">—</div></div>
         </div>
       </div>
 
@@ -340,6 +346,20 @@ function render(d){
   $("stLat").innerHTML=(d.latency_ms??"—")+'<u>ms</u>';
   $("stPpl").textContent=d.persons??0;
   $("stUp").textContent=fmtUptime(d.uptime_s||0);
+
+  // Apple Watch vitals (pushed by the iPhone app to POST /vitals)
+  const vt=d.vitals;
+  if(vt && d.ts && (d.ts-(vt._rx||0) < 20)){
+    $("vBadge").textContent="LIVE"; $("vBadge").classList.add("live");
+    if(vt.heartRate!=null)   $("vHr").innerHTML=Math.round(vt.heartRate)+'<u>bpm</u>';
+    if(vt.spo2!=null)        $("vSpo2").innerHTML=Math.round(vt.spo2)+'<u>%</u>';
+    if(vt.temperature!=null) $("vTemp").innerHTML=Number(vt.temperature).toFixed(1)+'<u>°C</u>';
+    const an=vt.anomaly||(vt.isAnomaly?"Anomaly":"Normal");
+    $("vStat").textContent=an;
+    $("vStat").style.color=(vt.isAnomaly||vt.emergency)?"var(--high)":"var(--normal)";
+  } else {
+    $("vBadge").textContent="PAIRING"; $("vBadge").classList.remove("live");
+  }
 
   // Alerts/notifications fire for CRITICAL (falling) only.
   const a=d.alert||{active:false};

@@ -103,6 +103,7 @@ class SharedState:
         self._frame_seq = 0          # increments every encoded frame
         self._event = None           # latest detection/alert dict
         self._event_seq = 0          # increments every recognition result
+        self._vitals = None          # latest Apple Watch vitals (HR/SpO2/temp/anomaly)
         self.started = time.time()
 
     # --- writers ---
@@ -124,6 +125,15 @@ class SharedState:
     def get_event(self):
         with self._lock:
             return self._event, self._event_seq
+
+    def set_vitals(self, vitals):
+        vitals["_rx"] = time.time()   # Pi-clock receipt time (for freshness)
+        with self._lock:
+            self._vitals = vitals
+
+    def get_vitals(self):
+        with self._lock:
+            return self._vitals
 
 
 STATE = SharedState()
@@ -442,6 +452,7 @@ def inference_loop(args, stop_event):
                 "latency_ms": round(dt * 1000, 1),
                 "persons": int(cur_present),
                 "alert": alert_snap,
+                "vitals": STATE.get_vitals(),   # Apple Watch HR/SpO2/temp/anomaly
                 "uptime_s": round(now - STATE.started, 1),
             })
 
@@ -585,6 +596,31 @@ class Handler(BaseHTTPRequestHandler):
     def _send_bytes(self, code, ctype, data):
         self._send_headers(code, ctype, length=len(data))
         self.wfile.write(data)
+
+    def do_POST(self):
+        # Ingest Apple Watch vitals from the iPhone companion app:
+        #   POST /vitals  {"heartRate":72,"spo2":98,"temperature":36.6,
+        #                  "anomaly":"Normal","isAnomaly":false,"emergency":false}
+        path = self.path.split("?", 1)[0]
+        if path == "/vitals":
+            try:
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                data = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+                STATE.set_vitals(data)
+                self._send_bytes(200, "application/json", b'{"ok":true}')
+            except Exception as e:
+                self._send_bytes(400, "application/json",
+                                 json.dumps({"ok": False, "error": str(e)}).encode())
+        else:
+            self._send_headers(404, "text/plain", length=9)
+            self.wfile.write(b"not found")
+
+    def do_OPTIONS(self):  # CORS preflight (harmless; iOS doesn't need it)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def _serve_dashboard(self):
         try:
