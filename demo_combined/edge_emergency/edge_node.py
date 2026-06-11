@@ -511,6 +511,31 @@ _ICON_SVG = (
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
 ).encode("utf-8")
 
+# Compact, glanceable status page for a phone home-screen "web widget" app.
+WIDGET_HTML = b"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart-Care</title>
+<style>html,body{margin:0;height:100%;background:#0a0e14;color:#eaf0f6;
+font-family:Inter,system-ui,Arial}.w{height:100vh;display:flex;flex-direction:column;
+justify-content:center;padding:5%;box-sizing:border-box}.st{font-size:8vw;font-weight:800;
+line-height:1.05}.dot{display:inline-block;width:.6em;height:.6em;border-radius:50%;margin-right:.35em}
+.sub{font-size:3.6vw;color:#7d8c9e;margin-top:6px}.row{display:flex;gap:6%;margin-top:8px;
+font-family:ui-monospace,monospace}.m b{font-size:6vw}.m span{font-size:3.2vw;color:#7d8c9e}</style>
+</head><body><div class="w"><div class="st" id="st"><span class="dot" id="dot"></span><span id="t">—</span></div>
+<div class="sub" id="sub">connecting…</div><div class="row"><div class="m"><b id="hr">—</b><span> bpm</span></div>
+<div class="m"><b id="o2">—</b><span> %SpO2</span></div></div></div><script>
+var SEV={CRITICAL:"#f43f5e",HIGH:"#fb923c",MEDIUM:"#fbbf24",LOW:"#a3e635",NORMAL:"#34d399"};
+function g(i){return document.getElementById(i)}
+function tick(){fetch("/state",{cache:"no-store"}).then(function(r){return r.json()}).then(function(d){
+var a=d.alert||{active:false},txt,col;
+if(a.active&&a.severity==="CRITICAL"){txt="FALL DETECTED";col=SEV.CRITICAL}
+else{txt=d.action||"—";col=SEV[d.severity]||"#34d399"}
+g("t").textContent=txt;g("dot").style.background=col;g("st").style.color=col;
+var v=d.vitals||{};g("hr").textContent=v.heartRate?Math.round(v.heartRate):"—";
+g("o2").textContent=v.spo2?Math.round(v.spo2):"—";
+g("sub").textContent="updated "+new Date().toLocaleTimeString([],{hour12:false});
+}).catch(function(){g("sub").textContent="offline"})}
+tick();setInterval(tick,2000);</script></body></html>"""
+
 _ICON_PNG_CACHE = {}
 
 def _icon_png(size):
@@ -585,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_bytes(200, "application/manifest+json", _MANIFEST)
         elif path == "/sw.js":
             self._send_bytes(200, "application/javascript", _SW_JS)
+        elif path == "/widget":
+            self._send_bytes(200, "text/html; charset=utf-8", WIDGET_HTML)
         elif path == "/icon.svg":
             self._send_bytes(200, "image/svg+xml", _ICON_SVG)
         elif path in ("/icon-192.png", "/icon-512.png", "/icon-180.png"):
