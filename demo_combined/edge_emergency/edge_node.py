@@ -144,14 +144,16 @@ class AlertEngine:
     refreshing while the emergency keeps recurring.
     """
 
-    def __init__(self, conf_thr=0.55, window=5, min_hits=3, hold_s=8.0):
+    def __init__(self, conf_thr=0.55, window=5, min_hits=3, hold_s=8.0, refire_s=5.0):
         self.conf_thr = conf_thr
         self.window = window
         self.min_hits = min_hits
         self.hold_s = hold_s
+        self.refire_s = refire_s             # re-fire interval while still active
         self.history = deque(maxlen=window)  # (label, conf, severity)
         self.alert = None                    # dict or None
-        self.alert_count = 0                 # total alerts raised this session
+        self.alert_count = 0                 # total distinct alert episodes
+        self.fire_seq = 0                    # increments on every (re)fire
 
     def update(self, label, conf, now):
         """Feed one recognition result. Returns (alert_dict_or_None, just_fired)."""
@@ -183,16 +185,24 @@ class AlertEngine:
             cand_sev = severity_of(candidate)
             if self.alert is None or self.alert["label"] != candidate:
                 # New alert (or escalated to a different emergency)
+                self.fire_seq += 1
                 self.alert = {
                     "label": candidate,
                     "severity": cand_sev,
                     "started_at": now,
                     "last_seen": now,
+                    "last_fired": now,
                 }
                 self.alert_count += 1
                 just_fired = True
             else:
+                # Same emergency persists -> re-fire every refire_s so a person
+                # who STAYS fallen keeps raising alerts/notifications.
                 self.alert["last_seen"] = now
+                if now - self.alert["last_fired"] >= self.refire_s:
+                    self.alert["last_fired"] = now
+                    self.fire_seq += 1
+                    just_fired = True
         elif self.alert is not None:
             # No fresh emergency vote — clear once the hold window expires
             if now - self.alert["last_seen"] > self.hold_s:
@@ -209,6 +219,7 @@ class AlertEngine:
             "severity": self.alert["severity"],
             "age_s": round(now - self.alert["started_at"], 1),
             "count": self.alert_count,
+            "fires": self.fire_seq,
         }
 
 
@@ -268,6 +279,21 @@ SEV_BGR = {
     "NORMAL": (160, 200, 90),
 }
 
+_VIGNETTE_CACHE = {}
+
+def _red_vignette(frame, strength=0.65):
+    """Blend a soft red vignette into the frame edges in-place (emergency cue)."""
+    h, w = frame.shape[:2]
+    m = _VIGNETTE_CACHE.get((h, w))
+    if m is None:
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        r = np.sqrt(((xx - w / 2.0) / (w / 2.0)) ** 2 + ((yy - h / 2.0) / (h / 2.0)) ** 2)
+        m = (np.clip((r - 0.55) / 0.6, 0.0, 1.0) ** 1.5)[..., None]  # 0 center -> 1 edges
+        _VIGNETTE_CACHE[(h, w)] = m
+    a = m * strength
+    red = np.array([45, 45, 235], dtype=np.float32)  # BGR
+    np.copyto(frame, (frame.astype(np.float32) * (1.0 - a) + red * a).astype(np.uint8))
+
 
 def annotate(frame, keypoints, scores, bboxes, label, conf, severity, alert, fps):
     """Draw a CLEAN skeleton overlay (+ a bottom emergency banner only).
@@ -279,17 +305,10 @@ def annotate(frame, keypoints, scores, bboxes, label, conf, severity, alert, fps
     if len(keypoints) > 0:
         demo_onnx.draw_skeleton(frame, keypoints, scores, kpt_thr=0.3)
 
-    h, w = frame.shape[:2]
-
-    # Emergency banner (bottom) when an alert is latched
+    # On an active emergency, tint the frame edges with a soft red vignette —
+    # cleaner than burned-in low-res text; the dashboard shows the details.
     if alert and alert.get("active"):
-        bcol = SEV_BGR.get(alert["severity"], (60, 60, 230))
-        ov = frame.copy()
-        cv2.rectangle(ov, (0, h - 56), (w, h), bcol, -1)
-        cv2.addWeighted(ov, 0.75, frame, 0.25, 0, frame)
-        msg = f"! {alert['severity']} EMERGENCY: {alert['label'].upper()}"
-        cv2.putText(frame, msg, (14, h - 20), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.95, (255, 255, 255), 2, cv2.LINE_AA)
+        _red_vignette(frame)
     return frame
 
 
@@ -297,7 +316,7 @@ def inference_loop(args, stop_event):
     detector, pose, recog = build_pipeline(args)
     engine = AlertEngine(
         conf_thr=args.alert_conf, window=args.alert_window,
-        min_hits=args.alert_hits, hold_s=args.alert_hold,
+        min_hits=args.alert_hits, hold_s=args.alert_hold, refire_s=args.alert_refire,
     )
 
     source = resolve_source(args)
@@ -306,6 +325,10 @@ def inference_loop(args, stop_event):
         print(f"ERROR: cannot open source {source!r}")
         stop_event.set()
         return
+    try:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # keep latency low on live cameras
+    except Exception:
+        pass
 
     src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
@@ -419,8 +442,9 @@ def inference_loop(args, stop_event):
                 "uptime_s": round(now - STATE.started, 1),
             })
 
-        # Pace to target fps when reading a file (so playback isn't too fast)
-        if args.video and args.max_fps > 0:
+        # Cap the processing rate: paces file playback AND throttles a live camera
+        # to keep CPU load / temperature down (applies to every source now).
+        if args.max_fps > 0:
             sleep = (1.0 / args.max_fps) - dt
             if sleep > 0:
                 time.sleep(sleep)
@@ -636,7 +660,8 @@ def get_lan_ip():
 def run_selftest(args, n_frames):
     detector, pose, recog = build_pipeline(args)
     engine = AlertEngine(conf_thr=args.alert_conf, window=args.alert_window,
-                         min_hits=args.alert_hits, hold_s=args.alert_hold)
+                         min_hits=args.alert_hits, hold_s=args.alert_hold,
+                         refire_s=args.alert_refire)
     source = resolve_source(args)
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
@@ -748,6 +773,9 @@ def parse_args():
     p.add_argument("--alert-window", type=int, default=5)
     p.add_argument("--alert-hits", type=int, default=3)
     p.add_argument("--alert-hold", type=float, default=8.0)
+    p.add_argument("--alert-refire", type=float, default=5.0,
+                   help="Re-fire an active alert every N seconds while it persists "
+                        "(so a person who stays fallen keeps raising notifications).")
     # Modes
     p.add_argument("--selftest", type=int, default=0,
                    help="Run N frames headless (no server) and exit")

@@ -266,10 +266,11 @@ async function armAlerts(){
   beep("NORMAL");            // audible confirmation
   if(navigator.vibrate) navigator.vibrate(40);
 }
-$("armBtn").onclick = armAlerts;
+function disarmAlerts(){ armed=false; $("armBtn").classList.remove("armed"); $("armTxt").textContent="Enable alerts"; }
+$("armBtn").onclick = ()=>{ armed ? disarmAlerts() : armAlerts(); };
 
 function beep(sev){
-  if(!actx) return;
+  if(!armed || !actx) return;
   const crit = sev==="CRITICAL"; const reps = crit?3:(sev==="HIGH"?2:1);
   for(let i=0;i<reps;i++){
     const o=actx.createOscillator(), g=actx.createGain();
@@ -282,6 +283,7 @@ function beep(sev){
   }
 }
 function notify(sev, label){
+  if(!armed) return;
   const body = `${sev} — ${label}`;
   const opts = {body, icon:"/icon-192.png", badge:"/icon-192.png", tag:"smartcare-alert",
                 renotify:true, vibrate:[200,100,200,100,300], requireInteraction:(sev==="CRITICAL")};
@@ -342,7 +344,7 @@ function render(d){
   // Alerts/notifications fire for CRITICAL (falling) only.
   const a=d.alert||{active:false};
   if(a.active && a.severity==="CRITICAL"){
-    const key=a.label+"#"+a.count;
+    const key=a.label+"#"+(a.fires??a.count);
     if(key!==lastAlertKey){ lastAlertKey=key; beep("CRITICAL"); notify("CRITICAL",a.label); pushLog("CRITICAL",a.label); }
     if(key!==ackKey) showBar(a.label,a.age_s);
   } else { lastAlertKey=null; hideBar(); }
