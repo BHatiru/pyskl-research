@@ -807,6 +807,10 @@ def parse_args():
                    help="Serve over HTTPS with an auto-generated self-signed cert. "
                         "Required for phone OS notifications + 'add to home screen' (PWA). "
                         "Browsers will warn about the cert once — accept it to proceed.")
+    p.add_argument("--http-port", type=int, default=8000,
+                   help="When --https is set, ALSO serve plain HTTP on this port (for "
+                        "home-screen web-widgets / clients that can't accept the self-signed "
+                        "cert). Same routes, shared state. Set 0 to disable.")
     p.add_argument("--no-video", action="store_true", help="Disable MJPEG encoding")
     p.add_argument("--jpeg-quality", type=int, default=80)
     # Models
@@ -863,6 +867,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     ip = get_lan_ip()
     scheme = "http"
+    companion = None
     if args.https:
         try:
             cert, key = ensure_self_signed_cert(ip)
@@ -870,15 +875,22 @@ def main():
             ctx.load_cert_chain(cert, key)
             server.socket = ctx.wrap_socket(server.socket, server_side=True)
             scheme = "https"
+            # Companion plain-HTTP listener (same Handler/STATE) for web-widgets
+            # and simple POSTers that can't accept a self-signed cert.
+            if args.http_port and args.http_port != args.port:
+                companion = ThreadingHTTPServer((args.host, args.http_port), Handler)
+                threading.Thread(target=companion.serve_forever, daemon=True).start()
         except Exception as e:
             print(f"  ! HTTPS setup failed ({e}); serving plain HTTP instead.")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print("\n" + "=" * 60)
     print("  Smart-Care Edge Emergency Node is LIVE")
-    print(f"  Open the dashboard:  {scheme}://{ip}:{args.port}/")
-    print(f"  (local: {scheme}://127.0.0.1:{args.port}/)")
+    print(f"  Dashboard:  {scheme}://{ip}:{args.port}/")
     if scheme == "https":
-        print("  NOTE: self-signed cert -> the browser warns once; tap Advanced -> Proceed.")
+        print("  (self-signed cert -> the browser warns once; Advanced -> Proceed)")
+    if companion is not None:
+        print(f"  Home-screen widget (plain HTTP):  http://{ip}:{args.http_port}/widget")
+        print(f"  Vitals POST (plain HTTP):         http://{ip}:{args.http_port}/vitals")
     print("=" * 60 + "\n")
     try:
         while not stop.is_set():
