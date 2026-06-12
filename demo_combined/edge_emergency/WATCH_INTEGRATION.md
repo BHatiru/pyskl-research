@@ -1,24 +1,64 @@
-# Apple Watch ↔ Smart-Care Pi — integration spec
+# Apple Watch → Smart-Care Pi — integration handoff
 
-The Pi edge node now accepts vitals from the iPhone companion app and shows them
-live on the dashboard (the **Vitals · Apple Watch** panel). The watch app
-(`eisenchamp/smart_house_app`) is on-device only, so the **only change needed on
-the iOS side is a ~15-line HTTP POST** — no Pi changes required.
+The Pi accepts vitals from the iPhone companion app and shows them live on the
+dashboard (the **Vitals · Apple Watch** panel). The watch app
+(`eisenchamp/smart_house_app`) is on-device only, so the **only iOS change needed
+is a ~15-line HTTP POST** — no Pi changes.
+
+> **If you were having trouble connecting — read the "Why it fails" section.**
+> Use the **plain-HTTP** endpoint (port 8000), grant the **Local Network**
+> permission, and make sure the phone is on the **same Wi-Fi** as the Pi.
+
+---
+
+## 1. The endpoint — use plain HTTP, port 8000
 
 ```
-Apple Watch (HealthKit / DataSimulator)
-        │  WCSession.sendMessage   (already exists)
-        ▼
-iPhone  WatchSessionManager + AnomalyDetector (CoreML)
-        │  NEW: URLSession POST /vitals   ◄── add this
-        ▼
-Raspberry Pi  edge_node.py  ──►  dashboard "Vitals · Apple Watch" panel
-                                  (HR / SpO₂ / Temp / anomaly status)
+POST http://<PI-IP>:8000/vitals
+Content-Type: application/json
 ```
 
-## The contract — `POST https://<pi-ip>:8443/vitals`
+**Verify it works first** (from any laptop on the same Wi-Fi — no app needed):
 
-JSON body (all fields optional; send what you have):
+```bash
+curl -X POST http://<PI-IP>:8000/vitals \
+  -H "Content-Type: application/json" \
+  -d '{"heartRate":72,"spo2":98,"temperature":36.6,"anomaly":"Normal","isAnomaly":false}'
+# -> {"ok":true}      and the dashboard's Vitals panel flips to LIVE
+```
+
+If that curl works but the app doesn't, the problem is **on the iOS side** (§3),
+not the Pi.
+
+> **Why port 8000 and not 8443?** 8443 is HTTPS with a **self-signed** cert, which
+> iOS `URLSession` rejects unless you add a trust delegate. Port **8000 is plain
+> HTTP** — far simpler for a LAN device. (Both ports accept `/vitals`.)
+
+## 2. Finding `<PI-IP>` (it changes per network!)
+
+The Pi's IP depends on the Wi-Fi it's on. To find the current one:
+- It's printed when the node starts (`Dashboard: https://<ip>:8443/`), **or**
+- shown in the **Control Panel** status line, **or**
+- try the mDNS name **`smartcare.local`** (works from iOS too): `http://smartcare.local:8000/vitals`.
+
+👉 **Best practice: make the Pi host a settings field in the app**, default
+`smartcare.local`, so you don't recompile when the network changes. *(Right now
+it's `192.168.0.212`, but assume it will change.)*
+
+## 3. Why it fails on iOS (the 3 usual culprits)
+
+1. **Local Network permission (iOS 14+).** An app **cannot** talk to a LAN device
+   until the user grants "Local Network" access — and it **fails silently** otherwise.
+   - Add to **Info.plist**: `NSLocalNetworkUsageDescription` = *"Connect to the Smart-Care monitor on your network."*
+   - The permission prompt appears on the **first** local connection attempt — the user must tap **Allow**. (Settings → the app → Local Network to re-enable.)
+2. **App Transport Security blocks plain HTTP.** Add to **Info.plist**:
+   ```xml
+   <key>NSAppTransportSecurity</key>
+   <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+   ```
+3. **Phone not on the same Wi-Fi as the Pi.** Cellular/other SSID → no route.
+
+## 4. The JSON contract
 
 ```json
 {
@@ -31,80 +71,77 @@ JSON body (all fields optional; send what you have):
   "ts": 1733940000.0            // optional unix seconds
 }
 ```
+Post on each new reading (~1 Hz) and again on emergency. Dashboard shows `LIVE`
+while readings are fresh (<20 s), else `PAIRING`; abnormal renders amber.
 
-Response: `{"ok":true}`. Post on every new reading (e.g. ~1 Hz) and again on an
-emergency. The dashboard shows `LIVE` while readings are fresh (<20 s), else
-`PAIRING`. An abnormal status (`isAnomaly`/`emergency`) renders amber.
-
-> The Pi serves HTTPS with a **self-signed** cert (so the phone dashboard can do
-> notifications). iOS `URLSession` rejects self-signed certs unless you trust them
-> — the delegate below handles that. If you'd rather use plain HTTP, run the Pi
-> node without `--https` (port 8000) and add an ATS exception instead.
-
-## Add to `Smart_home/WatchSessionManager.swift`
+## 5. Swift — add to `Smart_home/WatchSessionManager.swift`
 
 ```swift
 import Foundation
 
-// Posts vitals to the Pi hub; trusts the Pi's self-signed HTTPS cert.
-final class HubPoster: NSObject, URLSessionDelegate {
-    static let shared = HubPoster()
+enum Hub {
+    // 🔧 Set to your Pi. Plain HTTP + port 8000.  smartcare.local works on iOS.
+    static let url = URL(string: "http://smartcare.local:8000/vitals")!
 
-    // 🔧 Set your Pi's LAN IP (printed when edge_node starts). 8443 = HTTPS.
-    static let hubURL = URL(string: "https://192.168.1.81:8443/vitals")!
-
-    private lazy var session = URLSession(configuration: .default,
-                                          delegate: self, delegateQueue: nil)
-
-    func post(_ payload: [String: Any]) {
+    static func post(hr: Double, spo2: Double, temp: Double,
+                     anomaly: String, isAnomaly: Bool, emergency: Bool) {
+        let payload: [String: Any] = [
+            "heartRate": hr, "spo2": spo2, "temperature": temp,
+            "anomaly": anomaly, "isAnomaly": isAnomaly, "emergency": emergency,
+            "ts": Date().timeIntervalSince1970,
+        ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        var req = URLRequest(url: Self.hubURL)
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         req.timeoutInterval = 3
-        session.dataTask(with: req).resume()
-    }
-
-    // Trust the Pi's self-signed certificate (LAN-local only).
-    func urlSession(_ s: URLSession, didReceive ch: URLAuthenticationChallenge,
-                    completionHandler done: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if let trust = ch.protectionSpace.serverTrust {
-            done(.useCredential, URLCredential(trust: trust))
-        } else { done(.performDefaultHandling, nil) }
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            if let err = err { print("vitals POST failed:", err) }            // watch the console
+            else if let r = resp as? HTTPURLResponse { print("vitals POST:", r.statusCode) }
+        }.resume()
     }
 }
 ```
 
-Then call it from `WatchSessionManager` (it already has `healthData` +
-`predictionLabel`). Add a helper and call it where readings/emergencies arrive:
+Call it where readings/emergencies arrive — your `WatchSessionManager` already
+has `healthData` + `predictionLabel`:
 
 ```swift
-func pushVitals(isAnomaly: Bool = false, emergency: Bool = false) {
-    HubPoster.shared.post([
-        "heartRate":   healthData.heartRate,
-        "spo2":        healthData.spo2,
-        "temperature": healthData.temperature,
-        "anomaly":     predictionLabel,
-        "isAnomaly":   isAnomaly,
-        "emergency":   emergency,
-        "ts":          Date().timeIntervalSince1970,
-    ])
-}
+// in session(_:didReceiveMessage:) after updating healthData:
+Hub.post(hr: healthData.heartRate, spo2: healthData.spo2, temp: healthData.temperature,
+         anomaly: predictionLabel, isAnomaly: false, emergency: false)
+
+// in handleEmergency(...):
+Hub.post(hr: healthData.heartRate, spo2: healthData.spo2, temp: healthData.temperature,
+         anomaly: predictionLabel, isAnomaly: true, emergency: true)
 ```
 
-- In `session(_:didReceiveMessage:)`, after updating `healthData`, call `self.pushVitals()`.
-- In `handleEmergency(...)`, call `self.pushVitals(isAnomaly: true, emergency: true)`.
+## 6. Troubleshooting checklist
 
-## Demo without a real Apple Watch
+| symptom | cause / fix |
+|---|---|
+| `curl` to `:8000/vitals` fails too | Pi node not running, or wrong IP. Start it; re-check the IP. |
+| `curl` works, app doesn't | iOS side: Local Network permission **not granted**, or ATS, or wrong host. |
+| First POST hangs ~30 s then fails | Local Network prompt was dismissed/denied → enable in iOS Settings. |
+| Works once, then stops | phone left the Wi-Fi, or Pi IP changed → use `smartcare.local`. |
+| Console prints a status code (200) but no LIVE | check the JSON keys match §4. |
 
-The app already has `DataSimulator.swift` (modes: normal / tachycardia /
-bradycardia / lowSpO₂ / fever / multi-anomaly). Drive `pushVitals()` from a
-simulated reading on a timer — the dashboard shows the chosen condition live,
-alongside the Pi's skeleton fall detection. One screen, two subsystems.
+## 7. Demo without a real Apple Watch
 
-## Next (optional) — fusion
+- Their app has `DataSimulator.swift` (normal / tachy / brady / lowSpO₂ / fever /
+  multi) — drive `Hub.post(...)` from a simulated reading on a timer.
+- Or run our Python mock (no app at all):
+  `python demo_combined/edge_emergency/mock_vitals.py --url http://<PI-IP>:8000/vitals`
 
-Today the Pi just **displays** vitals. A later step: fuse them — e.g. a fall
-(skeleton) **co-occurring** with abnormal vitals (low SpO₂ / tachycardia) raises
-a higher-confidence emergency than either alone.
+## 8. (Optional) HTTPS variant
+
+If you prefer 8443/HTTPS, it works too — but add a `URLSessionDelegate` that
+trusts the self-signed cert (`URLCredential(trust:)`), and post to
+`https://<PI-IP>:8443/vitals`. Plain HTTP (§1) is recommended for the demo.
+
+## Next: fusion (optional)
+
+Today the Pi **displays** vitals. Next step: fuse them — a fall (skeleton)
+**co-occurring** with abnormal vitals (low SpO₂ / tachycardia) → higher-confidence
+emergency than either alone.
