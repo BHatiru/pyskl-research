@@ -245,7 +245,7 @@
 <!-- Emergency banner (CRITICAL / fall only) -->
 <div class="alertbar" id="ab">
   <div class="ab-ico">!</div>
-  <div class="ab-txt"><div class="ab-kind">FALL DETECTED</div><div class="ab-sub" id="abSub"></div></div>
+  <div class="ab-txt"><div class="ab-kind" id="abKind">FALL DETECTED</div><div class="ab-sub" id="abSub"></div></div>
   <button class="ab-ack" id="abAck">Acknowledge</button>
 </div>
 
@@ -306,7 +306,7 @@ function notify(sev, label){
 function fmtUptime(s){ s=Math.floor(s); const m=Math.floor(s/60),h=Math.floor(m/60);
   if(h) return `${h}h ${m%60}m`; if(m) return `${m}m ${s%60}s`; return `${s}s`; }
 
-let lastAlertKey=null, ackKey=null, logHasItems=false; const logEl=$("log");
+let lastAlertKey=null, ackKey=null, logHasItems=false, vitWasAbn=false, vitEpisode=0; const logEl=$("log");
 function pushLog(sev,label){
   if(!logHasItems){ logEl.innerHTML=""; logHasItems=true; }
   const row=document.createElement("div"); row.className="ev";
@@ -316,9 +316,9 @@ function pushLog(sev,label){
 }
 
 const vidWrap=document.querySelector(".video-wrap");
-function showBar(label,age){
-  $("abSub").textContent=`Critical · ${label} · detected ${age}s ago`;
-  $("ab").classList.add("show"); vidWrap.classList.add("crit");
+function showBar(title,sub,vid){
+  $("abKind").textContent=title; $("abSub").textContent=sub;
+  $("ab").classList.add("show"); vidWrap.classList.toggle("crit",!!vid);
 }
 function hideBar(){ $("ab").classList.remove("show"); vidWrap.classList.remove("crit"); }
 $("abAck").onclick = ()=>{ ackKey=lastAlertKey; hideBar(); };
@@ -348,26 +348,40 @@ function render(d){
   $("stPpl").textContent=d.persons??0;
   $("stUp").textContent=fmtUptime(d.uptime_s||0);
 
-  // Apple Watch vitals (pushed by the iPhone app to POST /vitals)
-  const vt=d.vitals;
-  if(vt && d.ts && (d.ts-(vt._rx||0) < 20)){
+  // ---- Apple Watch vitals: values + per-metric green(stable)/red(abnormal) ----
+  const vt=d.vitals; const vtFresh = vt && d.ts && (d.ts-(vt._rx||0) < 20);
+  if(vtFresh){
     $("vBadge").textContent="LIVE"; $("vBadge").classList.add("live");
-    if(vt.heartRate!=null)   $("vHr").innerHTML=Math.round(vt.heartRate)+'<u>bpm</u>';
-    if(vt.spo2!=null)        $("vSpo2").innerHTML=Math.round(vt.spo2)+'<u>%</u>';
-    if(vt.temperature!=null) $("vTemp").innerHTML=Number(vt.temperature).toFixed(1)+'<u>°C</u>';
-    const an=vt.anomaly||(vt.isAnomaly?"Anomaly":"Normal");
-    $("vStat").textContent=an;
-    $("vStat").style.color=(vt.isAnomaly||vt.emergency)?"var(--high)":"var(--normal)";
+    const setV=(id,html,ok)=>{ const e=$(id); e.innerHTML=html; e.style.color=ok?"var(--normal)":"var(--critical)"; };
+    if(vt.heartRate!=null)   setV("vHr",   Math.round(vt.heartRate)+'<u>bpm</u>', vt.heartRate>=50 && vt.heartRate<=100);
+    if(vt.spo2!=null)        setV("vSpo2", Math.round(vt.spo2)+'<u>%</u>',        vt.spo2>=92);
+    if(vt.temperature!=null) setV("vTemp", Number(vt.temperature).toFixed(1)+'<u>°C</u>', vt.temperature>=35 && vt.temperature<=38);
+    const abn=(vt.isAnomaly||vt.emergency);
+    $("vStat").textContent=vt.anomaly||(abn?"Anomaly":"Normal");
+    $("vStat").style.color=abn?"var(--critical)":"var(--normal)";
   } else {
     $("vBadge").textContent="PAIRING"; $("vBadge").classList.remove("live");
   }
 
-  // Alerts/notifications fire for CRITICAL (falling) only.
+  // ---- Unified emergency alerts: skeleton FALL (Pi) + VITALS anomaly (watch) ----
   const a=d.alert||{active:false};
+  const vitAbn = vtFresh && (vt.emergency || vt.isAnomaly);
+  if(vitAbn && !vitWasAbn) vitEpisode++;     // new episode each time vitals go abnormal
+  vitWasAbn = vitAbn;
+  let al=null;
   if(a.active && a.severity==="CRITICAL"){
-    const key=a.label+"#"+(a.fires??a.count);
-    if(key!==lastAlertKey){ lastAlertKey=key; beep("CRITICAL"); notify("CRITICAL",a.label); pushLog("CRITICAL",a.label); }
-    if(key!==ackKey) showBar(a.label,a.age_s);
+    al={sev:"CRITICAL", title:"FALL DETECTED", label:a.label, vid:true,
+        sub:`Critical · ${a.label} · detected ${a.age_s}s ago`,
+        key:"fall#"+(a.fires??a.count), log:a.label};
+  } else if(vitAbn){
+    const sev=vt.emergency?"CRITICAL":"HIGH", an=vt.anomaly||"Abnormal vitals";
+    al={sev, title:"VITALS ALERT", label:an, vid:false,
+        sub:`${an} · HR ${Math.round(vt.heartRate||0)} · SpO₂ ${Math.round(vt.spo2||0)}%`,
+        key:"vitals#"+an+"#"+vitEpisode, log:"Vitals · "+an};
+  }
+  if(al){
+    if(al.key!==lastAlertKey){ lastAlertKey=al.key; beep(al.sev); notify(al.sev,al.label); pushLog(al.sev,al.log); }
+    if(al.key!==ackKey) showBar(al.title,al.sub,al.vid); else hideBar();
   } else { lastAlertKey=null; hideBar(); }
 }
 
