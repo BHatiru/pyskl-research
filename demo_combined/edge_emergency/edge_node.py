@@ -52,7 +52,8 @@ import demo_onnx  # noqa: E402  (YOLOXDetector, RTMPoseEstimator, STGCNRecognize
 
 # Pluggable pose front-ends (rtmpose two-stage / movenet single-stage)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pose_backends import MoveNetEstimator, run_frontend, has_person  # noqa: E402
+from pose_backends import (MoveNetEstimator, MoveNetMultiPose,  # noqa: E402
+                           run_frontend, has_person)
 
 # ---------------------------------------------------------------------------
 #  Medical action -> emergency severity  (matches demo_combined/inference.py)
@@ -266,6 +267,12 @@ def build_pipeline(args):
         mv = args.movenet_model or str(model_dir / "movenet_thunder_int8.tflite")
         detector = None
         pose = MoveNetEstimator(mv, threads=threads)
+    elif args.pose_backend == "movenet_multi":
+        # Single-stage MULTI-person (up to 6); confidence-gated so non-human
+        # clutter is filtered out. COCO-17, feeds the top-M into STGCN++.
+        mv = args.movenet_model or str(model_dir / "movenet_multipose_fp16.tflite")
+        detector = None
+        pose = MoveNetMultiPose(mv, threads=threads, in_size=args.movenet_size)
     else:
         detector = demo_onnx.YOLOXDetector(
             str(model_dir / args.det_model), device="cpu",
@@ -815,12 +822,17 @@ def parse_args():
     p.add_argument("--jpeg-quality", type=int, default=80)
     # Models
     p.add_argument("--model-dir", default=str(_DEMO_DIR / "onnx_models"))
-    p.add_argument("--pose-backend", choices=["rtmpose", "movenet"], default="rtmpose",
+    p.add_argument("--pose-backend", choices=["rtmpose", "movenet", "movenet_multi"],
+                   default="rtmpose",
                    help="rtmpose = YOLOX+RTMPose two-stage (proven); "
-                        "movenet = MoveNet single-stage (~4x faster front-end, single-person)")
+                        "movenet = MoveNet single-person (fastest); "
+                        "movenet_multi = MoveNet MultiPose (up to 6 people, junk-filtered)")
     p.add_argument("--movenet-model", default="",
-                   help="MoveNet TFLite path (default: <model-dir>/movenet_thunder_int8.tflite). "
-                        "Use Thunder, not Lightning — Lightning misses falls.")
+                   help="MoveNet TFLite path. Default: thunder_int8 (movenet) or "
+                        "multipose_fp16 (movenet_multi).")
+    p.add_argument("--movenet-size", type=int, default=256,
+                   help="MultiPose input size (multiple of 32; 256 default, 320 = more "
+                        "accurate/slower).")
     p.add_argument("--det-model", default="yolox_tiny.onnx")
     p.add_argument("--pose-model", default="rtmpose_m.onnx")
     p.add_argument("--recog-model", default="stgcnpp_medical15_cent2d.onnx")

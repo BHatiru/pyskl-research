@@ -278,11 +278,11 @@ class App:
         adv = self._collapsible(pf, "advanced")
         self.e_cam = self._field(adv, "Camera index", "4")
         self.e_url = self._field(adv, "Stream URL", "http://192.168.1.72:8080/video")
-        self.v_pose = tk.StringVar(value="movenet")
+        self.v_pose = tk.StringVar(value="movenet_multi")
         pr = ttk.Frame(adv, style="Card.TFrame"); pr.pack(fill="x", pady=2)
         ttk.Label(pr, text="Pose backend", width=16).pack(side="left")
-        ttk.Combobox(pr, textvariable=self.v_pose, values=["movenet", "rtmpose"],
-                     state="readonly", width=12).pack(side="left")
+        ttk.Combobox(pr, textvariable=self.v_pose, values=["movenet_multi", "movenet", "rtmpose"],
+                     state="readonly", width=14).pack(side="left")
         self.e_short = self._field(adv, "Short side", "320")
         self.e_recog = self._field(adv, "Recog every N", "4")
         self.e_persons = self._field(adv, "Person slots", "2")

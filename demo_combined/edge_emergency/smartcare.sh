@@ -6,8 +6,8 @@ cd "$(dirname "$0")/../.." || exit 1          # repo root
 PY=.venv-edge/bin/python
 NODE=demo_combined/edge_emergency/edge_node.py
 # Edit these flags to taste. --max-fps 0 = uncapped; set e.g. 15 if the Pi runs hot.
-ARGS="--camera 4 --pose-backend movenet --num-person 2 --short-side 320 \
-      --recog-every 4 --max-fps 0 --port 8443 --https --http-port 8000"
+ARGS="--camera 4 --pose-backend movenet_multi --num-person 2 --short-side 640 \
+      --recog-every 2 --max-fps 0 --port 8443 --https --http-port 8000"
 PATTERN='[e]dge_node.py'                        # bracket = pkill won't match itself
 
 case "${1:-}" in
