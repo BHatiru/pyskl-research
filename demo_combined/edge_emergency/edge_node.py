@@ -361,6 +361,7 @@ def inference_loop(args, stop_event):
     present_buf = deque(maxlen=args.window_frames)  # per-frame person-presence gate
     fps_win = deque(maxlen=30)
     loop_prev = None  # previous iteration start (for true throughput incl. fps cap)
+    cam_fail = 0      # consecutive failed reads (live camera resilience)
 
     cached_bboxes = []
     results = []
@@ -386,8 +387,27 @@ def inference_loop(args, stop_event):
             if args.video and args.loop:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-            print("Source ended.")
-            break
+            if args.video:                      # a finite file that genuinely ended
+                print("Source ended.")
+                break
+            # Live camera / stream: a single failed read is usually a transient
+            # glitch — DON'T exit. Skip the frame; reopen if it keeps failing.
+            cam_fail += 1
+            if cam_fail % 200 == 0:
+                print(f"source read failing ({cam_fail}); reopening {source!r}...")
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                time.sleep(0.5)
+                cap = cv2.VideoCapture(source)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+            time.sleep(0.02)
+            continue
+        cam_fail = 0
         frame_count += 1
         if (proc_w, proc_h) != (src_w, src_h):
             frame = cv2.resize(frame, (proc_w, proc_h))
@@ -848,13 +868,16 @@ def parse_args():
     p.add_argument("--det-score-thr", type=float, default=0.5)
     p.add_argument("--threads", type=int, default=4)
     # Alert engine
-    p.add_argument("--prob-ema", type=float, default=0.5,
-                   help="EMA weight on each new recognition's probabilities "
-                        "(1.0=no smoothing, lower=smoother/steadier; 0.5 default)")
-    p.add_argument("--alert-conf", type=float, default=0.55)
+    p.add_argument("--prob-ema", type=float, default=0.85,
+                   help="EMA weight on each recognition's probs (1.0=no smoothing). "
+                        "0.85 keeps brief FALL spikes responsive (alerts are critical-only "
+                        "now, so we no longer need heavy smoothing to suppress staggering).")
+    p.add_argument("--alert-conf", type=float, default=0.5)
     p.add_argument("--alert-window", type=int, default=5)
-    p.add_argument("--alert-hits", type=int, default=3)
-    p.add_argument("--alert-hold", type=float, default=8.0)
+    p.add_argument("--alert-hits", type=int, default=2)
+    p.add_argument("--alert-hold", type=float, default=30.0,
+                   help="Seconds a CRITICAL fall alert stays latched — long, so a fall "
+                        "stays an emergency while the person is down (clear via Acknowledge).")
     p.add_argument("--alert-refire", type=float, default=5.0,
                    help="Re-fire an active alert every N seconds while it persists "
                         "(so a person who stays fallen keeps raising notifications).")
