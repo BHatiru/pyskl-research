@@ -19,8 +19,15 @@ import argparse
 import json
 import random
 import ssl
+import sys
 import time
 import urllib.request
+
+# The anomaly labels contain '₂' (SpO₂); make console prints survive cp1252 (Windows).
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # mode -> (base HR, base SpO2, base temp, anomaly label, isAnomaly)
 MODES = {
