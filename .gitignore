@@ -170,3 +170,5 @@ federated_v2/outputs_temporal/*.json
 
 # Test videos
 test/demo_combined/edge_emergency/.certs/
+demo_combined/edge_emergency/dist/
+.pyi_build/

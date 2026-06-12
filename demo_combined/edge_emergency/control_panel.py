@@ -8,10 +8,21 @@ commands we use by hand.
 
 Run:   python control_panel.py
 Deps:  paramiko  (pip install paramiko).  GUI = Tkinter (stdlib).
-Package to a standalone Windows .exe later with:
+Package to a standalone Windows .exe with:
        pyinstaller --onefile --noconsole --name SmartCareControl control_panel.py
 """
 import os
+import sys
+
+# When frozen by PyInstaller (conda-based Tk), point Tcl/Tk at the bundled data
+# BEFORE importing tkinter, or _tkinter fails to load its DLLs.
+if getattr(sys, "frozen", False):
+    _base = getattr(sys, "_MEIPASS", "")
+    for _var, _sub in (("TCL_LIBRARY", "tcl8.6"), ("TK_LIBRARY", "tk8.6")):
+        _p = os.path.join(_base, _sub)
+        if os.path.isdir(_p):
+            os.environ[_var] = _p
+
 import queue
 import shlex
 import threading
@@ -40,14 +51,12 @@ DEFAULTS = dict(host="smartcare.local", user="batyr",
 class PiController:
     def __init__(self):
         self.client = None
-        self.host = None
-        self.user = None
-        self.password = None
+        self.host = self.user = self.password = None
 
     @property
     def connected(self):
-        return self.client is not None and self.client.get_transport() is not None \
-            and self.client.get_transport().is_active()
+        t = self.client.get_transport() if self.client else None
+        return bool(t and t.is_active())
 
     def connect(self, host, user, key_path=None, password=None):
         c = paramiko.SSHClient()
@@ -75,8 +84,7 @@ class PiController:
             e.read().decode("utf-8", "replace").strip()
 
     def fire(self, cmd):
-        """Launch a detached/background command without waiting for EOF
-        (a nohup/setsid/disown launch never closes the channel otherwise)."""
+        """Launch a detached/background command without waiting for EOF."""
         if not self.connected:
             raise RuntimeError("not connected")
         ch = self.client.get_transport().open_session()
@@ -92,7 +100,6 @@ class PiController:
         pw = self.password or ""
         return self.run(f"echo {shlex.quote(pw)} | sudo -S bash -c {shlex.quote(cmd)} 2>&1")
 
-    # ── status / control ────────────────────────────────────────────────────
     def is_running(self):
         out, _ = self.run(f"pgrep -f '{PATTERN}' >/dev/null && echo YES || echo NO")
         return out.strip().endswith("YES")
@@ -108,10 +115,8 @@ class PiController:
     def start(self, p):
         if self.is_running():
             return "already running"
-        if p["source"] == "camera":
-            src = f"--camera {int(p['camera'])}"
-        else:
-            src = f"--source {shlex.quote(p['url'])}"
+        src = (f"--camera {int(p['camera'])}" if p["source"] == "camera"
+               else f"--source {shlex.quote(p['url'])}")
         args = (f"{src} --pose-backend {p['pose']} --num-person {int(p['persons'])} "
                 f"--short-side {int(p['short'])} --recog-every {int(p['recog'])} "
                 f"--max-fps {p['maxfps']} --port {DEFAULTS['port']} --https --http-port 8000")
@@ -127,24 +132,20 @@ class PiController:
         return "stopped" if not self.is_running() else "still running?"
 
     def add_wifi(self, ssid, psk, priority=15):
-        name = "panel-" + "".join(ch for ch in ssid if ch.isalnum())[:24] or "panel-wifi"
+        name = "panel-" + ("".join(ch for ch in ssid if ch.isalnum())[:24] or "wifi")
         cmd = (f"nmcli connection add type wifi ifname wlan0 con-name {shlex.quote(name)} "
                f"autoconnect yes connection.autoconnect-priority {priority} "
                f"ssid {shlex.quote(ssid)} wifi-sec.key-mgmt wpa-psk "
                f"wifi-sec.psk {shlex.quote(psk)}")
         out, _ = self.sudo(cmd)
-        return out or f"added '{ssid}' (will join when in range)"
-
-    def tail_log(self, n=12):
-        out, _ = self.run(f"tail -n {n} /tmp/edge.log 2>/dev/null "
-                          f"| grep -vE 'GetGpuDevices|device_discovery'")
-        return out
+        return out or f"added '{ssid}' (joins when in range)"
 
 
 # ════════════════════════════════════════════════════════════════════════════
 #  GUI
 # ════════════════════════════════════════════════════════════════════════════
-BG, CARD, LINE, TXT, MUT, ACC = "#0d1320", "#141d2e", "#243248", "#e7edf5", "#8aa0bd", "#2dd4bf"
+BG, CARD, INSET, LINE, TXT, MUT, ACC = (
+    "#0d1320", "#141d2e", "#0b111d", "#243248", "#e7edf5", "#8aa0bd", "#2dd4bf")
 
 
 class App:
@@ -154,10 +155,11 @@ class App:
         self.q = queue.Queue()
         root.title("Smart-Care · Control Panel")
         root.configure(bg=BG)
-        root.geometry("560x760")
+        root.geometry("460x600")
+        root.minsize(380, 420)
         self._style()
         self._build()
-        self.root.after(120, self._drain)
+        self.root.after(150, self._drain)
         self._set_conn(False)
 
     # ── styling ──────────────────────────────────────────────────────────────
@@ -167,100 +169,133 @@ class App:
             s.theme_use("clam")
         except tk.TclError:
             pass
-        s.configure(".", background=BG, foreground=TXT, fieldbackground=CARD, bordercolor=LINE)
+        s.configure(".", background=BG, foreground=TXT, fieldbackground=INSET, bordercolor=LINE)
         s.configure("TFrame", background=BG)
-        s.configure("Card.TLabelframe", background=CARD, bordercolor=LINE, relief="solid", borderwidth=1)
-        s.configure("Card.TLabelframe.Label", background=CARD, foreground=MUT, font=("Segoe UI", 9, "bold"))
+        s.configure("Card.TFrame", background=CARD)
         s.configure("TLabel", background=CARD, foreground=TXT, font=("Segoe UI", 9))
-        s.configure("Hdr.TLabel", background=BG, foreground=TXT, font=("Segoe UI", 14, "bold"))
+        s.configure("BG.TLabel", background=BG, foreground=TXT, font=("Segoe UI", 9))
+        s.configure("Hdr.TLabel", background=BG, foreground=TXT, font=("Segoe UI", 13, "bold"))
         s.configure("Mut.TLabel", background=CARD, foreground=MUT, font=("Segoe UI", 8))
-        s.configure("TButton", background=CARD, foreground=TXT, font=("Segoe UI", 9), padding=6, borderwidth=1)
+        s.configure("CardTitle.TLabel", background=CARD, foreground=MUT, font=("Segoe UI", 8, "bold"))
+        s.configure("TButton", background=INSET, foreground=TXT, font=("Segoe UI", 9), padding=5, borderwidth=1)
         s.map("TButton", background=[("active", LINE)])
         s.configure("Accent.TButton", background=ACC, foreground="#062a26", font=("Segoe UI", 9, "bold"))
         s.map("Accent.TButton", background=[("active", "#5fe6d6")])
-        s.configure("TEntry", fieldbackground="#0b111d", foreground=TXT, insertcolor=TXT)
+        s.configure("Link.TButton", background=CARD, foreground=MUT, borderwidth=0, font=("Segoe UI", 8))
+        s.map("Link.TButton", background=[("active", CARD)], foreground=[("active", ACC)])
+        s.configure("TEntry", fieldbackground=INSET, foreground=TXT, insertcolor=TXT)
         s.configure("TRadiobutton", background=CARD, foreground=TXT)
-        s.configure("TCombobox", fieldbackground="#0b111d", foreground=TXT)
+        s.configure("TCombobox", fieldbackground=INSET, foreground=TXT)
+        s.configure("Vertical.TScrollbar", background=CARD, troughcolor=BG, bordercolor=BG, arrowcolor=MUT)
 
-    def _card(self, parent, title):
-        f = ttk.Labelframe(parent, text=" " + title + " ", style="Card.TLabelframe", padding=10)
-        f.pack(fill="x", padx=12, pady=(0, 10))
-        return f
+    # ── small layout helpers ──────────────────────────────────────────────────
+    def _card(self, title):
+        outer = tk.Frame(self.body, bg=LINE)            # 1px border
+        outer.pack(fill="x", padx=10, pady=(0, 9))
+        f = tk.Frame(outer, bg=CARD)
+        f.pack(fill="x", padx=1, pady=1)
+        inner = ttk.Frame(f, style="Card.TFrame", padding=11)
+        inner.pack(fill="x")
+        ttk.Label(inner, text=title.upper(), style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
+        return inner
 
-    def _row(self, parent, label, widget, r):
-        ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", padx=(0, 8), pady=3)
-        widget.grid(row=r, column=1, sticky="ew", pady=3)
-        parent.columnconfigure(1, weight=1)
+    def _field(self, parent, label, init="", show=None, width=None):
+        row = ttk.Frame(parent, style="Card.TFrame"); row.pack(fill="x", pady=2)
+        ttk.Label(row, text=label, width=16).pack(side="left")
+        e = ttk.Entry(row, show=show, width=width)
+        e.pack(side="left", fill="x", expand=True)
+        if init:
+            e.insert(0, init)
+        return e
 
+    def _collapsible(self, parent, title):
+        st = {"open": False}
+        btn = ttk.Button(parent, text="▸ " + title, style="Link.TButton")
+        btn.pack(anchor="w", pady=(4, 0))
+        body = ttk.Frame(parent, style="Card.TFrame")
+
+        def toggle():
+            st["open"] = not st["open"]
+            if st["open"]:
+                body.pack(fill="x"); btn.config(text="▾ " + title)
+            else:
+                body.forget(); btn.config(text="▸ " + title)
+        btn.config(command=toggle)
+        return body
+
+    # ── build ──────────────────────────────────────────────────────────────────
     def _build(self):
-        ttk.Label(self.root, text="Smart-Care · Control Panel", style="Hdr.TLabel").pack(
-            anchor="w", padx=12, pady=(12, 2))
-        self.connlbl = ttk.Label(self.root, text="● disconnected", style="Mut.TLabel", background=BG)
-        self.connlbl.pack(anchor="w", padx=12, pady=(0, 10))
+        # fixed header
+        top = ttk.Frame(self.root, style="TFrame"); top.pack(fill="x")
+        ttk.Label(top, text="Smart-Care · Control Panel", style="Hdr.TLabel").pack(anchor="w", padx=12, pady=(11, 1))
+        self.connlbl = ttk.Label(top, text="● disconnected", style="Mut.TLabel", background=BG)
+        self.connlbl.pack(anchor="w", padx=12, pady=(0, 8))
 
-        # Connection
-        c = self._card(self.root, "Connection")
-        self.e_host = ttk.Entry(c); self.e_host.insert(0, DEFAULTS["host"])
-        self.e_user = ttk.Entry(c); self.e_user.insert(0, DEFAULTS["user"])
-        self.e_key = ttk.Entry(c); self.e_key.insert(0, DEFAULTS["key"])
-        self.e_pw = ttk.Entry(c, show="•")
-        self._row(c, "Host / IP", self.e_host, 0)
-        self._row(c, "User", self.e_user, 1)
-        self._row(c, "Key file", self.e_key, 2)
-        self._row(c, "Password (for Wi-Fi/sudo)", self.e_pw, 3)
-        bf = ttk.Frame(c, style="TFrame"); bf.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        bf.configure(style="TFrame")
+        # scrollable body
+        cont = ttk.Frame(self.root, style="TFrame"); cont.pack(fill="both", expand=True)
+        canvas = tk.Canvas(cont, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(cont, orient="vertical", command=canvas.yview)
+        self.body = ttk.Frame(canvas, style="TFrame")
+        win = canvas.create_window((0, 0), window=self.body, anchor="nw")
+        self.body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+
+        # — Connection — (host + buttons up front; the rest tucked away)
+        c = self._card("Connection")
+        self.e_host = self._field(c, "Host / IP", DEFAULTS["host"])
+        bf = ttk.Frame(c, style="Card.TFrame"); bf.pack(fill="x", pady=(6, 0))
         ttk.Button(bf, text="Connect", style="Accent.TButton", command=self.on_connect).pack(side="left")
-        ttk.Button(bf, text="Find Pi", command=self.on_find).pack(side="left", padx=6)
+        ttk.Button(bf, text="Find Pi", command=self.on_find).pack(side="left", padx=5)
         ttk.Button(bf, text="Disconnect", command=self.on_disconnect).pack(side="left")
+        det = self._collapsible(c, "login details")
+        self.e_user = self._field(det, "User", DEFAULTS["user"])
+        self.e_key = self._field(det, "Key file", DEFAULTS["key"])
+        self.e_pw = self._field(det, "Password", show="•")
 
-        # Server control
-        sv = self._card(self.root, "Demo server")
-        self.srvlbl = ttk.Label(sv, text="status: —    temp: —", style="TLabel")
-        self.srvlbl.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
-        ttk.Button(sv, text="▶ Start", style="Accent.TButton", command=self.on_start).grid(row=1, column=0, padx=(0, 6))
-        ttk.Button(sv, text="■ Stop", command=self.on_stop).grid(row=1, column=1, padx=6)
-        ttk.Button(sv, text="↻ Restart", command=self.on_restart).grid(row=1, column=2, padx=6)
-        ttk.Button(sv, text="Refresh", command=self.on_status).grid(row=1, column=3, padx=6)
-        ttk.Button(sv, text="🖥 Open dashboard", command=self.on_dash).grid(
-            row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        # — Demo server —
+        sv = self._card("Demo server")
+        self.srvlbl = ttk.Label(sv, text="status: —      temp: —", style="TLabel")
+        self.srvlbl.pack(anchor="w", pady=(0, 7))
+        g = ttk.Frame(sv, style="Card.TFrame"); g.pack(fill="x")
+        ttk.Button(g, text="▶ Start", style="Accent.TButton", command=self.on_start).pack(side="left")
+        ttk.Button(g, text="■ Stop", command=self.on_stop).pack(side="left", padx=5)
+        ttk.Button(g, text="↻ Restart", command=self.on_restart).pack(side="left")
+        ttk.Button(g, text="⟳", width=3, command=self.on_status).pack(side="left", padx=5)
+        ttk.Button(sv, text="🖥  Open dashboard", command=self.on_dash).pack(fill="x", pady=(7, 0))
 
-        # Parameters
-        pf = self._card(self.root, "Boot parameters")
+        # — Boot parameters — (just the common ones; rest under Advanced)
+        pf = self._card("Boot parameters")
         self.v_source = tk.StringVar(value="camera")
-        ttk.Radiobutton(pf, text="RealSense / camera", variable=self.v_source, value="camera").grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(pf, text="Phone / stream URL", variable=self.v_source, value="url").grid(row=0, column=1, sticky="w")
-        self.e_cam = ttk.Entry(pf, width=8); self.e_cam.insert(0, "4")
-        self.e_url = ttk.Entry(pf); self.e_url.insert(0, "http://192.168.1.72:8080/video")
-        self._row(pf, "Camera index", self.e_cam, 1)
-        self._row(pf, "Stream URL", self.e_url, 2)
+        sr = ttk.Frame(pf, style="Card.TFrame"); sr.pack(fill="x", pady=2)
+        ttk.Label(sr, text="Source", width=16).pack(side="left")
+        ttk.Radiobutton(sr, text="Camera", variable=self.v_source, value="camera").pack(side="left")
+        ttk.Radiobutton(sr, text="Phone URL", variable=self.v_source, value="url").pack(side="left", padx=(8, 0))
+        self.e_maxfps = self._field(pf, "Max FPS (0=uncap)", "0")
+        adv = self._collapsible(pf, "advanced")
+        self.e_cam = self._field(adv, "Camera index", "4")
+        self.e_url = self._field(adv, "Stream URL", "http://192.168.1.72:8080/video")
         self.v_pose = tk.StringVar(value="movenet")
-        cb = ttk.Combobox(pf, textvariable=self.v_pose, values=["movenet", "rtmpose"], state="readonly", width=10)
-        self._row(pf, "Pose backend", cb, 3)
-        self.e_short = ttk.Entry(pf, width=8); self.e_short.insert(0, "320")
-        self.e_recog = ttk.Entry(pf, width=8); self.e_recog.insert(0, "4")
-        self.e_maxfps = ttk.Entry(pf, width=8); self.e_maxfps.insert(0, "0")
-        self.e_persons = ttk.Entry(pf, width=8); self.e_persons.insert(0, "2")
-        self._row(pf, "Short side", self.e_short, 4)
-        self._row(pf, "Recognise every N frames", self.e_recog, 5)
-        self._row(pf, "Max FPS (0 = uncapped)", self.e_maxfps, 6)
-        self._row(pf, "Person slots", self.e_persons, 7)
-        ttk.Label(pf, text="Changes apply on next Start / Restart.", style="Mut.TLabel").grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        pr = ttk.Frame(adv, style="Card.TFrame"); pr.pack(fill="x", pady=2)
+        ttk.Label(pr, text="Pose backend", width=16).pack(side="left")
+        ttk.Combobox(pr, textvariable=self.v_pose, values=["movenet", "rtmpose"],
+                     state="readonly", width=12).pack(side="left")
+        self.e_short = self._field(adv, "Short side", "320")
+        self.e_recog = self._field(adv, "Recog every N", "4")
+        self.e_persons = self._field(adv, "Person slots", "2")
 
-        # Wi-Fi
-        wf = self._card(self.root, "Configure Pi Wi-Fi")
-        self.e_ssid = ttk.Entry(wf)
-        self.e_wpw = ttk.Entry(wf, show="•")
-        self._row(wf, "Network name (SSID)", self.e_ssid, 0)
-        self._row(wf, "Wi-Fi password", self.e_wpw, 1)
-        ttk.Button(wf, text="Add Wi-Fi to Pi", command=self.on_wifi).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Label(wf, text="Pi joins it automatically when that network is in range.", style="Mut.TLabel").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        # — Wi-Fi —
+        wf = self._card("Configure Pi Wi-Fi")
+        self.e_ssid = self._field(wf, "Network (SSID)")
+        self.e_wpw = self._field(wf, "Wi-Fi password", show="•")
+        ttk.Button(wf, text="Add Wi-Fi to Pi", command=self.on_wifi).pack(fill="x", pady=(7, 0))
 
-        # Log
-        lf = self._card(self.root, "Log")
-        self.log = tk.Text(lf, height=8, bg="#0b111d", fg=MUT, insertbackground=TXT,
+        # — Log —
+        lf = self._card("Log")
+        self.log = tk.Text(lf, height=6, bg=INSET, fg=MUT, insertbackground=TXT,
                            relief="flat", font=("Consolas", 8), wrap="word")
         self.log.pack(fill="both", expand=True)
 
@@ -270,6 +305,7 @@ class App:
 
     def _async(self, label, fn):
         self._logmsg(f"… {label}")
+
         def worker():
             try:
                 res = fn()
@@ -303,11 +339,12 @@ class App:
     def _refresh_status_async(self):
         if not self.pi.connected:
             return
+
         def worker():
             try:
                 st = self.pi.status()
-                txt = f"status: {'RUNNING' if st['running'] else 'stopped'}    temp: {st['temp']}    ip: {st['ip']}"
-                self.q.put(("srv", txt))
+                self.q.put(("srv", f"status: {'RUNNING' if st['running'] else 'stopped'}"
+                                   f"      temp: {st['temp']}      {st['ip']}"))
             except Exception as e:
                 self.q.put(("log", f"status error: {e}"))
         threading.Thread(target=worker, daemon=True).start()
@@ -322,6 +359,7 @@ class App:
     def on_connect(self):
         host, user = self.e_host.get().strip(), self.e_user.get().strip()
         key, pw = self.e_key.get().strip(), self.e_pw.get()
+
         def fn():
             self.pi.connect(host, user, key or None, pw or None)
             self.q.put(("conn", True))
@@ -355,6 +393,7 @@ class App:
 
     def on_restart(self):
         p = self._params()
+
         def fn():
             self.pi.stop(); time.sleep(2); return self.pi.start(p)
         self._async("restart server", fn)
